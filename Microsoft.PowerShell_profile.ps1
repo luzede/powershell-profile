@@ -46,6 +46,9 @@ function Set-Theme {
     $env:OmpTheme = $Theme
     [System.Environment]::SetEnvironmentVariable('OmpTheme', $env:OmpTheme, 'User')
     Update-Theme
+    
+    # Refresh Oh My Posh in the current session
+    oh-my-posh init pwsh --config "$Home\Documents\PowerShell\Themes\${env:OmpTheme}.omp.json" | Invoke-Expression
 }
 
 function Update-Theme {
