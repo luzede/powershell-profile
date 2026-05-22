@@ -1,6 +1,6 @@
 ### Chris Titus Tech's PowerShell profile
 
-oh-my-posh init pwsh --config $Home\cobalt2.omp.json | Invoke-Expression
+oh-my-posh init pwsh --config $Home\Documents\PowerShell\Themes\${env:OmpTheme}.omp.json | Invoke-Expression
 zoxide init --cmd z powershell | Out-String | Invoke-Expression
 Import-Module -Name Terminal-Icons
 
@@ -34,15 +34,57 @@ Set-PSReadLineKeyHandler -Chord 'Ctrl+y' -Function Redo
 
 # Functions
 function Update-Profile {
-    Invoke-WebRequest -Uri https://github.com/ChrisTitusTech/powershell-profile/raw/main/Microsoft.PowerShell_profile.ps1 -OutFile $Profile
+    Invoke-WebRequest -Uri https://raw.githubusercontent.com/luzede/powershell-profile/main/Microsoft.PowerShell_profile.ps1 -OutFile $Profile
     Write-Host "Updated PowerShell Profile" -ForegroundColor Green
+}
+
+function Set-Theme {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Theme
+    )
+    $env:OmpTheme = $Theme
+    [System.Environment]::SetEnvironmentVariable('OmpTheme', $env:OmpTheme, 'User')
+    Update-Theme
+}
+
+function Update-Theme {
+    if ([string]::IsNullOrWhiteSpace($env:OmpTheme)) {
+        Write-Warning "No Oh My Posh theme is currently set in the environment."
+        return
+    }
+    Get-Theme $env:OmpTheme
+}
+
+function Get-Theme {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Theme
+    )
+    $Theme = $Theme.ToLower()
+    $ThemeDir = "$Home\Documents\PowerShell\Themes"
+    $ThemePath = "$ThemeDir\$Theme.omp.json"
+
+    if (-not (Test-Path -Path $ThemeDir)) {
+        New-Item -Path $ThemeDir -ItemType Directory -Force | Out-Null
+    }
+
+    try {
+        $Uri = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/$Theme.omp.json"
+        Invoke-WebRequest -Uri $Uri -OutFile $ThemePath -ErrorAction Stop
+        Write-Host "Downloaded Oh My Posh Theme: $Theme" -ForegroundColor Green
+    }
+    catch {
+        Write-Error "Failed to download theme '$Theme'. Please verify the name or your internet connection."
+    }
 }
 
 # File / Directory Utilities
 function touch ($File) {
     if (Test-Path $File) {
         (Get-Item $File).LastWriteTime = Get-Date
-    } else {
+    }
+    else {
         New-Item $File -ItemType File | Out-Null
     }
 }
@@ -54,9 +96,10 @@ function mkcd ($Path) {
 
 function trash ($Path) {
     if (Test-Path $Path -PathType Container) {
-        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Path,'OnlyErrorDialogs','SendToRecycleBin')
-    } else {
-        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($Path,'OnlyErrorDialogs','SendToRecycleBin')
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Path, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    }
+    else {
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($Path, 'OnlyErrorDialogs', 'SendToRecycleBin')
     }
 }
 
@@ -101,6 +144,24 @@ function winutildev {
     Invoke-RestMethod https://christitus.com/windev | Invoke-Expression
 }
 
+# Bash Aliases
+function export ($arg) {
+    if ($arg -match '^(.*?)=(.*)$') {
+        $name = $matches[1]
+        $value = $matches[2]
+        
+        # Remove surrounding quotes if they exist
+        if ($value -match "^['`"](.*)['`"]$") {
+            $value = $matches[1]
+        }
+        
+        Set-Item -Path "env:$name" -Value $value
+    }
+    else {
+        Write-Warning "Usage: export VAR=value"
+    }
+}
+
 # Git Shortcuts
 function gs { git status }
 function ga { git add . }
@@ -140,13 +201,13 @@ Set-Alias -Name grep -Value Select-String
 
 # Help Function
 function Show-Help {
-    $title    = $PSStyle.Foreground.BrightMagenta
-    $section  = $PSStyle.Foreground.BrightBlue
-    $command  = $PSStyle.Foreground.BrightGreen
-    $desc     = $PSStyle.Foreground.BrightWhite
-    $accent   = $PSStyle.Foreground.BrightYellow
-    $dim      = $PSStyle.Foreground.BrightBlack
-    $reset    = $PSStyle.Reset
+    $title = $PSStyle.Foreground.BrightMagenta
+    $section = $PSStyle.Foreground.BrightBlue
+    $command = $PSStyle.Foreground.BrightGreen
+    $desc = $PSStyle.Foreground.BrightWhite
+    $accent = $PSStyle.Foreground.BrightYellow
+    $dim = $PSStyle.Foreground.BrightBlack
+    $reset = $PSStyle.Reset
 
     Write-Host @"
 ${title}󰘳 PowerShell Profile Help${reset}
