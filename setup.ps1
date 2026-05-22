@@ -32,4 +32,4 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-p
 Install-Module -Name Terminal-Icons -Force -Repository PSGallery
 
 winget install JanDeDobbeleer.OhMyPosh ajeetdsouza.zoxide DEVCOM.JetBrainsMonoNerdFont --source winget --silent
-Write-Host "Successfully Installed CTT PowerShell Profile." -ForegroundColor Green
+Write-Host "Successfully Installed PowerShell Profile." -ForegroundColor Green
