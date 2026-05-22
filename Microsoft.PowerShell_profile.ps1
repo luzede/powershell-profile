@@ -48,7 +48,7 @@ function Set-Theme {
     Update-Theme
     
     # Refresh Oh My Posh in the current session
-    oh-my-posh init pwsh --config "$Home\Documents\PowerShell\Themes\${env:OmpTheme}.omp.json" | Invoke-Expression
+    $env:POSH_THEME = "$Home\Documents\PowerShell\Themes\${env:OmpTheme}.omp.json"
 }
 
 function Update-Theme {
