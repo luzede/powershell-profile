@@ -252,3 +252,207 @@ ${dim}────────────────────────�
 ${dim}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}
 "@
 }
+
+
+
+# EXTEND WITH CUSTOM SETTINGS FOR EACH INSTALLED TOOL
+
+
+
+
+# * COMMON ENVIRONMENT VARIABLES AND SETTINGS FOR INSTALLED TOOLS *
+# **********************************************************************
+# XDG is a set of standards for defining where user data files,
+# configuration files, cache files, and other types of files should be stored.
+$env:XDG_BIN_HOME = "$HOME\.local\bin"
+$env:XDG_CONFIG_HOME = "$HOME\.config"
+$env:XDG_DATA_HOME   = "$HOME\.local\share"
+$env:XDG_CACHE_HOME  = "$HOME\.cache"
+$env:XDG_STATE_HOME  = "$HOME\.local\state"
+
+# Helper: only write to registry if the value differs
+function Set-PersistentEnv([string]$Name, [string]$Value) {
+    if ([Environment]::GetEnvironmentVariable($Name, 'User') -ne $Value) {
+        [Environment]::SetEnvironmentVariable($Name, $Value, 'User')
+    }
+}
+
+Set-PersistentEnv 'XDG_BIN_HOME' $env:XDG_BIN_HOME
+Set-PersistentEnv 'XDG_CONFIG_HOME' $env:XDG_CONFIG_HOME
+Set-PersistentEnv 'XDG_DATA_HOME' $env:XDG_DATA_HOME
+Set-PersistentEnv 'XDG_CACHE_HOME' $env:XDG_CACHE_HOME
+Set-PersistentEnv 'XDG_STATE_HOME' $env:XDG_STATE_HOME
+
+# Ensure directories exist
+New-Item -ItemType Directory -Force -Path $env:XDG_CONFIG_HOME, $env:XDG_DATA_HOME, $env:XDG_CACHE_HOME, $env:XDG_STATE_HOME | Out-Null
+
+# **********************************************************************
+
+
+########################################################################
+# ===================================
+# Name: mise-en-place
+# Winget: jdx.mise
+# Link: https://github.com/jdx/mise
+# Description:
+#   Tools version management, this script activates the mise tool
+#   automatically whenever you open powershell so you can have access
+#   to global installed version of tools or the local one if configuration
+#   for it exists.
+# ===================================
+(&mise activate pwsh) | Out-String | Invoke-Expression
+# ===================================
+########################################################################
+
+
+########################################################################
+# ===================================
+# Name: less
+# Winget: jftuga.less
+# Link: https://github.com/jftuga/less-Windows
+# Description:
+#   Because I didn't like that it was creating the "_lesshst" file
+#   in the user's folder, I am changing the environment variable
+#   and creating a specified folder for it in ".config/less"
+#   so that "_lesshst" will be created there
+#
+#   Also "less" is installed because it helps "bat" command and is
+#   more feature full than the powershell equivalent.
+# ===================================
+# Set the history path for 'less' globally for this session
+$lessConfigDir = "$env:XDG_CONFIG_HOME\less"
+if (-not (Test-Path $lessConfigDir)) { New-Item -Path $lessConfigDir -ItemType Directory -Force | Out-Null }
+
+$lessHistFile = Join-Path $lessConfigDir "_lesshst"
+Set-PersistentEnv 'LESSHISTFILE' $lessHistFile
+# ===================================
+########################################################################
+
+
+########################################################################
+# ===================================
+# Name: Git
+# Winget: Git.Git
+# Link: https://git-scm.com/
+# Description:
+#   I don't like that git creates the ".gitconfig"
+#   file in the user's folder, so I create and use the "config" 
+#   file in ".config/git" because git website says
+#   "write to $XDG_CONFIG_HOME/git/config file if this file exists and the
+#   ~/.gitconfig file doesn’t"
+# ===================================
+$gitConfigDir = "$env:XDG_CONFIG_HOME\git"
+$gitConfigFile = "$gitConfigDir\config"
+
+
+# Check and create the directory if it doesn't exist
+New-Item -ItemType Directory -Path $gitConfigDir -Force | Out-Null
+
+# Unlike directory creation, file creation overwrites existing files,
+# so we first check if the file exists
+if (-not (Test-Path $gitConfigFile)) {
+    # If the file doesn't exist, create it
+    New-Item -ItemType File -Path $gitConfigFile -Force | Out-Null
+}
+# ===================================
+########################################################################
+
+
+
+# ########################################################################
+# # ===================================
+# # Name: docker
+# # Winget: Docker.DockerDesktop
+# # Link: https://www.docker.com/products/docker-desktop/
+# # Description:
+# #   I want docker config to be in XDG_CONFIG_HOME as well,
+# #   instead of the user's folder at "~/.docker"
+# # ===================================
+# # Set the DOCKER_CONFIG environment variable to point to the new directory
+# $dockerConfigDir = "$env:XDG_CONFIG_HOME\docker"
+# $env:DOCKER_CONFIG = $dockerConfigDir
+# ! RIGHT NOW THERE IS NO WAY TO STOP DOCKER DESKTOP FROM CREATING THE ".docker" FOLDER
+# ! SO THIS IS COMMENTED OUT FOR NOW UNTIL A SOLUTION IS FOUND
+# # ===================================
+# ########################################################################
+
+
+
+# ########################################################################
+# # ===================================
+# # Name: bun
+# # Winget:
+# # Link: https://bun.com/docs/installation#windows
+# # Description:
+# #   Where to install bun, I want it to follow XDG specification
+# # ===================================
+Set-PersistentEnv 'BUN_INSTALL' "$env:XDG_DATA_HOME\bun"
+Set-PersistentEnv 'BUN_INSTALL_GLOBAL_DIR' "$env:XDG_DATA_HOME\bun\global"
+Set-PersistentEnv 'BUN_INSTALL_BIN' "$env:XDG_DATA_HOME\bun\bin"
+# # ===================================
+# ########################################################################
+
+
+
+########################################################################
+# ===================================
+# Name: aws
+# Winget: Amazon.AWSCLI
+# Link: https://aws.amazon.com/cli/
+# Description:
+#   I don't like that aws cli creates the ".aws" folder
+#   in the user's folder, so I am changing the environment variables
+#   to follow XDG Base Directory Specification
+# ===================================
+$awsConfigDir = "$env:XDG_CONFIG_HOME\aws"
+# Ensure the directory exists, create it if it doesn't
+New-Item -ItemType Directory -Path $awsConfigDir -Force | Out-Null
+
+Set-PersistentEnv 'AWS_SHARED_CREDENTIALS_FILE' "$awsConfigDir\credentials"
+Set-PersistentEnv 'AWS_CONFIG_FILE' "$awsConfigDir\config"
+# ===================================
+########################################################################
+
+
+
+########################################################################
+# ===================================
+# Name: azure-cli
+# Winget: Microsoft.AzureCLI
+# Link: https://learn.microsoft.com/en-us/cli/azure/
+# Description:
+#   I don't like that azure cli creates the ".azure" folder
+#   in the user's folder, so I am changing the environment variable
+#   to follow XDG Base Directory Specification
+# ===================================
+$azureConfigDir = "$env:XDG_DATA_HOME\azure"
+# Ensure the directory exists, create it if it doesn't
+New-Item -ItemType Directory -Path $azureConfigDir -Force | Out-Null
+
+Set-PersistentEnv 'AZURE_CONFIG_DIR' $azureConfigDir
+# ===================================
+########################################################################
+
+
+########################################################################
+# ===================================
+# Name: Rust, Cargo and Rustup
+# Winget: Rustlang.Rustup
+# Link: https://www.rust-lang.org/learn/get-started
+# Description:
+#   I don't like that Rust, Cargo, and Rustup create the ".cargo" and ".rustup" folders
+#   in the user's folder, so I am changing the environment variables
+#   to follow XDG Base Directory Specification
+# ===================================
+$rustupConfigDir = "$env:XDG_DATA_HOME\rustup"
+$cargoConfigDir = "$env:XDG_DATA_HOME\cargo"
+
+# Ensure the directory exists, create it if it doesn't
+New-Item -ItemType Directory -Path $rustupConfigDir -Force | Out-Null
+New-Item -ItemType Directory -Path $cargoConfigDir -Force | Out-Null
+
+
+Set-PersistentEnv 'RUSTUP_HOME' $rustupConfigDir
+Set-PersistentEnv 'CARGO_HOME' $cargoConfigDir
+# ===================================
+########################################################################
