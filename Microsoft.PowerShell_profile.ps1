@@ -218,6 +218,9 @@ ${dim}━━━━━━━━━━━━━━━━━━━━━━━━�
 
 ${section}󰊢 Update${reset}
   ${command}Update-Profile${reset}  ${accent}→${reset} ${desc}Updates the profile from a remote repository.${reset}
+  ${command}Set-Theme <theme>${reset} ${accent}→${reset} ${desc}Sets the Oh My Posh theme.${reset}
+  ${command}Update-Theme${reset}    ${accent}→${reset} ${desc}Updates the current Oh My Posh theme.${reset}
+
 
 ${section}󰊢 Git Shortcuts${reset}
 ${dim}────────────────────────────────────────────────────${reset}
