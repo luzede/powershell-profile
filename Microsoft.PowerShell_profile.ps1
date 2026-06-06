@@ -242,6 +242,7 @@ ${dim}────────────────────────�
     ${command}pgrep <name>${reset}       ${accent}→${reset} ${desc}Find process by name${reset}
     ${command}pkill <name>${reset}       ${accent}→${reset} ${desc}Stop process by name${reset}
   ${command}sed <file> <find> <replace>${reset} ${accent}→${reset} ${desc}Replace text${reset}
+  ${command}export <name=value>${reset} ${accent}→${reset} ${desc}Set environment variable${reset}
   ${command}touch <file>${reset}       ${accent}→${reset} ${desc}Create file${reset}
   ${command}unzip <file>${reset}       ${accent}→${reset} ${desc}Extract zip${reset}
   ${command}uptime${reset}             ${accent}→${reset} ${desc}System uptime${reset}
