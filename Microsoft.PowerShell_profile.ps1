@@ -460,3 +460,20 @@ Set-PersistentEnv 'RUSTUP_HOME' $rustupConfigDir
 Set-PersistentEnv 'CARGO_HOME' $cargoConfigDir
 # ===================================
 ########################################################################
+
+
+
+########################################################################
+# ===================================
+# Name: Claude Code
+# Winget: Anthropic.ClaudeCode
+# Link: https://claude.ai/code
+# Description:
+#   I don't like that Claude Code creates '~/.claude' folder
+#   in the user's folder, so I am changing the environment variable
+# ===================================
+$claudeConfigDir = "$env:XDG_CONFIG_HOME\claude"
+
+Set-PersistentEnv 'CLAUDE_CONFIG_DIR' $claudeConfigDir
+# ===================================
+########################################################################
