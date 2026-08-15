@@ -148,6 +148,7 @@ function Install-OhMyPoshTheme {
         New-Item -Path $themesPath -ItemType Directory -Force | Out-Null
     }
     $themePath = Join-Path $themesDir "$ThemeName.omp.json"
+    [Environment]::SetEnvironmentVariable("POSH_CONFIG", $themePath, "User")
     try {
         Save-UriToFile -Uri $ThemeUri -OutFile $themePath
         Write-Host "Oh My Posh theme installed to [$themePath]."
