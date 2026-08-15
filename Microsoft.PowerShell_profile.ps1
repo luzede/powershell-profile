@@ -845,7 +845,6 @@ Profile:
   Update-Profile     Check for profile updates.
   Update-PowerShell  Check for the latest PowerShell release and update with winget.
   Set-Theme <theme>  Set the Oh My Posh theme.
-  Update-Theme       Update the current Oh My Posh theme.
 
 Git:
   g                 Go to the GitHub directory with zoxide fallback.
