@@ -1,6 +1,6 @@
 ### Chris Titus Tech's PowerShell profile
 
-oh-my-posh init pwsh --config $env:POSH_THEME | Invoke-Expression
+oh-my-posh init pwsh --config "$env:POSH_CONFIG" | Invoke-Expression
 zoxide init --cmd z powershell | Out-String | Invoke-Expression
 Import-Module -Name Terminal-Icons
 
@@ -45,7 +45,7 @@ function Set-Theme {
     $themesDir = Join-Path (Get-ProfileDir) "Themes"
     
     # Refresh Oh My Posh in the current session
-    $env:POSH_THEME = Join-Path $themesDir "$ThemeName.omp.json"
+    $env:POSH_CONFIG = Join-Path $themesDir "$ThemeName.omp.json"
 }
 
 
@@ -792,7 +792,7 @@ function Register-CustomCompletion {
 
 function Resolve-OhMyPoshTheme {
     $candidates = @(
-        $env:POSH_THEME,
+        $env:POSH_CONFIG,
         (Join-Path $profileDir 'Themes' 'cobalt2.omp.json')
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
