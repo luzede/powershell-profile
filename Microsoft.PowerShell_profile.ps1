@@ -33,10 +33,6 @@ Set-PSReadLineKeyHandler -Chord 'Ctrl+z' -Function Undo
 Set-PSReadLineKeyHandler -Chord 'Ctrl+y' -Function Redo
 
 # Functions
-function Update-Profile {
-    Invoke-WebRequest -Uri https://raw.githubusercontent.com/luzede/powershell-profile/main/Microsoft.PowerShell_profile.ps1 -OutFile $Profile
-    Write-Host "Updated PowerShell Profile" -ForegroundColor Green
-}
 
 function Set-Theme {
     param(
