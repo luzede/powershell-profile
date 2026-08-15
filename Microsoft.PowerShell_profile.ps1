@@ -45,8 +45,11 @@ function Set-Theme {
 
     $themesDir = Join-Path (Get-ProfileDir) "Themes"
     
+    $themePath = Join-Path $themesDir "$ThemeName.omp.json"
+
     # Refresh Oh My Posh in the current session
-    [Environment]::SetEnvironmentVariable("POSH_CONFIG", (Join-Path $themesDir "$ThemeName.omp.json"), "User")
+    [Environment]::SetEnvironmentVariable("POSH_CONFIG", $themePath, "User")
+    oh-my-posh init pwsh --config "$themePath" | Invoke-Expression
 }
 
 
