@@ -1,6 +1,7 @@
 ### Chris Titus Tech's PowerShell profile
 
-oh-my-posh init pwsh --config "$env:POSH_CONFIG" | Invoke-Expression
+$poshConfig = [Environment]::GetEnvironmentVariable('POSH_CONFIG', 'User')
+oh-my-posh init pwsh --config "$poshConfig" | Invoke-Expression
 zoxide init --cmd z powershell | Out-String | Invoke-Expression
 Import-Module -Name Terminal-Icons
 
@@ -791,8 +792,10 @@ function Register-CustomCompletion {
 }
 
 function Resolve-OhMyPoshTheme {
+    $poshConfig = [Environment]::GetEnvironmentVariable('POSH_CONFIG', 'User')
+
     $candidates = @(
-        $env:POSH_CONFIG,
+        $poshConfig,
         (Join-Path $profileDir 'Themes' 'cobalt2.omp.json')
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
