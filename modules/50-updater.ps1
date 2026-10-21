@@ -32,35 +32,12 @@ function Test-ProfileUpdateDue {
     return ((Get-Date).Date - $lastRun.Date).TotalDays -ge $IntervalDays
 }
 
-function Test-ProfileIsSymlink {
-    $profilePath = $PROFILE.CurrentUserCurrentHost
-    $profileItem = Get-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
-    if ($profileItem -and $profileItem.LinkType -eq 'SymbolicLink') {
-        return $true
-    }
-    if ($global:IsRepoLinkedProfile -or $script:IsRepoLinkedProfile) {
-        return $true
-    }
-    if ($profileItem -and (Select-String -LiteralPath $profilePath -Pattern 'IsRepoLinkedProfile' -Quiet -ErrorAction SilentlyContinue)) {
-        return $true
-    }
-    return $false
-}
-
 function Update-Profile {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [switch]$Force,
         [switch]$PassThru
     )
-
-    if ((Test-ProfileIsSymlink) -and -not $Force) {
-        if ($isInteractiveShell) {
-            Write-Host 'Profile is linked to local git repository; skipping remote overwrite.' -ForegroundColor Cyan
-        }
-        if ($PassThru) { return $true }
-        return
-    }
 
     $url = "$repo_root/powershell-profile/main/Microsoft.PowerShell_profile.ps1"
     $target = $PROFILE.CurrentUserCurrentHost
@@ -105,7 +82,6 @@ function Update-Profile {
 
 function Invoke-ScheduledProfileUpdate {
     if (-not $isInteractiveShell -or
-        (Test-ProfileIsSymlink) -or
         -not (Test-ProfileUpdateDue -Path $timeFilePath -IntervalDays $updateInterval)) {
         return
     }

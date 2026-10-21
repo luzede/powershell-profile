@@ -13,10 +13,12 @@ The profile is organized into modular components under [`modules/`](modules) and
 - [`modules/40-linux-utils.ps1`](modules/40-linux-utils.ps1) — Linux/POSIX utilities (`export`, `unset`, `printenv`, `grep`, `sed`, `head`, `tail`, `which`, `touch`, `trash`, etc.) and system shortcuts (`admin`, `winutil`, `winutildev`, `windev`, etc.).
 - [`modules/50-updater.ps1`](modules/50-updater.ps1) — Non-blocking `OnIdle` scheduled profile updates, `Update-PowerShell`, `Clear-Cache`, `Show-Help`, user `Custom/*.ps1` drop-in loading, and startup orchestration.
 
-### Local Development
-Run [`./setprofile.ps1`](setprofile.ps1) to:
-1. Bundle `modules/*.ps1` into `Microsoft.PowerShell_profile.ps1`.
-2. Link your local `$PROFILE.CurrentUserCurrentHost` directly to `modules/*.ps1` so any edits in `modules/` take effect immediately on next terminal launch (and are protected from remote auto-update overwrites).
+### Local Development & Pre-Commit Hook
+A Git `pre-commit` hook in [`.githooks/pre-commit`](.githooks/pre-commit) automatically bundles `modules/*.ps1` into `Microsoft.PowerShell_profile.ps1` and stages it whenever you run `git commit`.
+
+Run [`./setprofile.ps1`](setprofile.ps1) once after cloning to:
+1. Configure `git config core.hooksPath .githooks` so commits automatically rebuild and stage `Microsoft.PowerShell_profile.ps1`.
+2. Bundle `modules/*.ps1` into `Microsoft.PowerShell_profile.ps1` and copy it to `$PROFILE.CurrentUserCurrentHost`.
 3. Provision XDG base directories and pre-build the startup cache.
 
 ## Remote Install

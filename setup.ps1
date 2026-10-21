@@ -124,8 +124,14 @@ function Install-Profile {
 function Install-WinGetPackage {
     param(
         [Parameter(Mandatory)][string]$Id,
-        [Parameter(Mandatory)][string]$Name
+        [Parameter(Mandatory)][string]$Name,
+        [string]$CommandName
     )
+
+    if ($CommandName -and (Test-Command $CommandName)) {
+        Write-Host "$Name is already installed."
+        return $true
+    }
 
     if (-not (Test-Command winget)) {
         Write-Warning "winget was not found. Skipping $Name."
@@ -134,7 +140,8 @@ function Install-WinGetPackage {
 
     try {
         winget install --id $Id --exact --source winget --accept-source-agreements --accept-package-agreements --silent
-        if ($LASTEXITCODE -ne 0) {
+        # 0 = installed, -1978335189 (0x8A15002B) = already installed / no applicable update, -1978335135 (0x8A150061) = package already installed
+        if ($LASTEXITCODE -notin @(0, -1978335189, -1978335135)) {
             Write-Warning "winget failed to install $Name. Exit code: $LASTEXITCODE"
             return $false
         }
@@ -279,8 +286,8 @@ if ([string]::IsNullOrWhiteSpace($ExpectedProfileHash) -and $PSScriptRoot) {
     }
 }
 $installedProfileHash = Install-Profile -SourceUri $profileSourceUri -ProfilePath $profilePath -ExpectedHash $ExpectedProfileHash
-Install-WinGetPackage -Id 'JanDeDobbeleer.OhMyPosh' -Name 'Oh My Posh' | Out-Null
-Install-WinGetPackage -Id 'ajeetdsouza.zoxide' -Name 'zoxide' | Out-Null
+Install-WinGetPackage -Id 'JanDeDobbeleer.OhMyPosh' -Name 'Oh My Posh' -CommandName 'oh-my-posh' | Out-Null
+Install-WinGetPackage -Id 'ajeetdsouza.zoxide' -Name 'zoxide' -CommandName 'zoxide' | Out-Null
 Install-OhMyPoshTheme | Out-Null
 Install-NerdFont | Out-Null
 Install-TerminalIconsModule | Out-Null
