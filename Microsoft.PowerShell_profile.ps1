@@ -1235,31 +1235,6 @@ function pst { Get-Clipboard }
 # Module 50: Profile Updater, Maintenance & Startup Orchestration
 # ======================================================================
 
-function Invoke-Profile {
-    $__existingVars = @{}
-    foreach ($__v in (Get-Variable -Scope Local)) {
-        $__existingVars[$__v.Name] = $true
-    }
-
-    . $PROFILE.CurrentUserCurrentHost
-
-    foreach ($__v in (Get-Variable -Scope Local)) {
-        if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -ne '__existingVars') {
-            Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
-        }
-    }
-    foreach ($__fn in (Get-ChildItem -Path Function:\)) {
-        if ($__fn.Name -notin @('Invoke-Profile', 'prompt') -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File) {
-            Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
-        }
-    }
-    foreach ($__al in (Get-Alias)) {
-        if ($__al.Options -notmatch 'ReadOnly|Constant') {
-            Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
-
 function Test-ProfileUpdateDue {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -1445,7 +1420,6 @@ PowerShell Profile Help
 =======================
 
 Profile & Environment:
-  Invoke-Profile            Reload this profile in the current session.
   Update-Profile            Check for profile updates.
   Update-PowerShell         Check for the latest PowerShell release and update with winget.
   Set-Theme <theme>         Download and set the Oh My Posh theme.
