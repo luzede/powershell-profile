@@ -4,17 +4,17 @@ A fast, modular PowerShell 7 profile for Windows Terminal with cached startup sc
 
 ## Architecture & Repository Layout
 
-The profile is organized into modular components under [`modules/`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/modules) and bundled into [`Microsoft.PowerShell_profile.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/Microsoft.PowerShell_profile.ps1) via [`setprofile.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/setprofile.ps1):
+The profile is organized into modular components under [`modules/`](modules) and bundled into [`Microsoft.PowerShell_profile.ps1`](Microsoft.PowerShell_profile.ps1) via [`setprofile.ps1`](setprofile.ps1):
 
-- [`modules/00-core.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/modules/00-core.ps1) — Core helpers, TLS/HTTP utilities, environment persistence helper, and override loading.
-- [`modules/10-xdg-env.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/modules/10-xdg-env.ps1) — Fast in-session XDG defaults and one-time persistent `User` environment & directory provisioning (`Initialize-XdgEnvironment`).
-- [`modules/20-prompt-cache.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/modules/20-prompt-cache.ps1) — Theme management (`Get-Theme`, `Set-Theme`) and cached initialization script generator (`Update-InitCache`, `Clear-InitCache`) for `oh-my-posh`, `zoxide`, and `mise`.
-- [`modules/30-readline.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/modules/30-readline.ps1) — `PSReadLine` colors, keybinds, sensitive history filtering, custom completions, and deferred `OnIdle` loading for `Terminal-Icons`.
-- [`modules/40-linux-utils.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/modules/40-linux-utils.ps1) — Linux/POSIX utilities (`export`, `unset`, `printenv`, `grep`, `sed`, `head`, `tail`, `which`, `touch`, `trash`, etc.) and system shortcuts.
-- [`modules/50-updater.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/modules/50-updater.ps1) — Non-blocking `OnIdle` scheduled profile updates, `Update-PowerShell`, `Clear-Cache`, `Show-Help`, and startup orchestration.
+- [`modules/00-core.ps1`](modules/00-core.ps1) — Core helpers, TLS/HTTP utilities, and environment persistence helper.
+- [`modules/10-xdg-env.ps1`](modules/10-xdg-env.ps1) — Fast in-session XDG defaults and one-time persistent `User` environment & directory provisioning (`Initialize-XdgEnvironment`).
+- [`modules/20-prompt-cache.ps1`](modules/20-prompt-cache.ps1) — Theme management (`Get-Theme`, `Set-Theme`) and cached initialization script generator (`Update-InitCache`, `Clear-InitCache`) for `oh-my-posh`, `zoxide`, and `mise`.
+- [`modules/30-readline.ps1`](modules/30-readline.ps1) — `PSReadLine` colors, keybinds, sensitive history filtering, custom completions, and deferred `OnIdle` loading for `Terminal-Icons`.
+- [`modules/40-linux-utils.ps1`](modules/40-linux-utils.ps1) — Linux/POSIX utilities (`export`, `unset`, `printenv`, `grep`, `sed`, `head`, `tail`, `which`, `touch`, `trash`, etc.) and system shortcuts.
+- [`modules/50-updater.ps1`](modules/50-updater.ps1) — Non-blocking `OnIdle` scheduled profile updates, `Update-PowerShell`, `Clear-Cache`, `Show-Help`, and startup orchestration.
 
 ### Local Development
-Run [`./setprofile.ps1`](file:///c:/Users/root/Documents/GitHub/Personal/powershell-profile/setprofile.ps1) to:
+Run [`./setprofile.ps1`](setprofile.ps1) to:
 1. Bundle `modules/*.ps1` into `Microsoft.PowerShell_profile.ps1`.
 2. Link your local `$PROFILE.CurrentUserCurrentHost` directly to `modules/*.ps1` so any edits in `modules/` take effect immediately on next terminal launch (and are protected from remote auto-update overwrites).
 3. Provision XDG environment variables and pre-build the startup cache.
@@ -51,33 +51,7 @@ After installing, restart Windows Terminal and set your PowerShell font to `Cask
 
 Run `Show-Help` in PowerShell to see the full command list.
 
-## Supported Overrides
-
-Place `CTTcustom.ps1` beside your profile to configure overrides before initialization:
-
-Variables:
-```powershell
-$debug_Override
-$repo_root_Override
-$show_help_Override
-$timeFilePath_Override
-$updateInterval_Override
-```
-
-Functions:
-```powershell
-Debug-Message_Override
-Update-Profile_Override
-Update-PowerShell_Override
-Clear-Cache_Override
-Get-Theme_Override
-WinUtilDev_Override
-Set-PredictionSource_Override
-```
-
 ## Support
 
 If this profile helps you, star the repo, share it, or sponsor development:
-https://github.com/sponsors/luzede
-
 https://github.com/sponsors/luzede

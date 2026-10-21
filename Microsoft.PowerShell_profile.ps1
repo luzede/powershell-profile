@@ -1,8 +1,8 @@
-﻿### PowerShell Profile (Bundled from modules/*.ps1 via setprofile.ps1)
+### PowerShell Profile (Bundled from modules/*.ps1 via setprofile.ps1)
 # Do not edit this bundled file directly; edit files in modules/ and run ./setprofile.ps1
 
 # ======================================================================
-# Module 00: Core Helpers, Overrides & Primitives
+# Module 00: Core Helpers & Primitives
 # ======================================================================
 
 function Enable-Tls12 {
@@ -94,33 +94,11 @@ function Get-ProfileCacheDir {
     Join-Path $cacheHome 'powershell'
 }
 
-$script:ProfileRoot = if ($PSScriptRoot) {
-    if ((Split-Path -Path $PSScriptRoot -Leaf) -eq 'modules') {
-        Split-Path -Path $PSScriptRoot -Parent
-    }
-    else {
-        $PSScriptRoot
-    }
-}
-else {
-    Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent
-}
-$script:CustomProfile = @(
-    (Join-Path -Path (Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent) -ChildPath 'CTTcustom.ps1'),
-    (Join-Path -Path $script:ProfileRoot -ChildPath 'CTTcustom.ps1')
-) | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-
-if ($script:CustomProfile) {
-    . $script:CustomProfile
-}
-
 $isInteractiveShell = Test-InteractiveShell
-$debug = if ($null -ne $debug_Override) { [bool]$debug_Override } else { $false }
-$repo_root = if ($repo_root_Override) { $repo_root_Override } else { 'https://raw.githubusercontent.com/luzede' }
+$repo_root = 'https://raw.githubusercontent.com/luzede'
 $profileDir = Get-ProfileDir
-$timeFilePath = if ($timeFilePath_Override) { $timeFilePath_Override } else { Join-Path $profileDir 'LastExecutionTime.txt' }
-$updateInterval = if ($null -ne $updateInterval_Override) { [int]$updateInterval_Override } else { 7 }
-$showHelpOnLaunch = if ($null -ne $show_help_Override) { [bool]$show_help_Override } else { $false }
+$timeFilePath = Join-Path $profileDir 'LastExecutionTime.txt'
+$updateInterval = 7
 
 # ======================================================================
 # Module 10: XDG Base Directory & Tool Environment Provisioning
@@ -553,30 +531,25 @@ function Initialize-PromptTool {
     $cacheDir = Get-ProfileCacheDir
 
     # 1. Oh My Posh (Cached)
-    if (Get-Command -Name 'Get-Theme_Override' -ErrorAction SilentlyContinue) {
-        Get-Theme_Override
+    $ompCache = Join-Path $cacheDir 'omp-init.ps1'
+    $ompThemeMeta = Join-Path $cacheDir 'omp-theme.txt'
+    $theme = Resolve-OhMyPoshTheme
+
+    if ($theme) {
+        $cachedTheme = if (Test-Path -LiteralPath $ompThemeMeta -PathType Leaf) {
+            ([string](Get-Content -LiteralPath $ompThemeMeta -Raw -ErrorAction SilentlyContinue)).Trim()
+        } else { $null }
+
+        if (-not (Test-Path -LiteralPath $ompCache -PathType Leaf) -or $cachedTheme -ne $theme) {
+            Update-InitCache -Tool 'oh-my-posh'
+        }
+
+        if (Test-Path -LiteralPath $ompCache -PathType Leaf) {
+            . $ompCache
+        }
     }
-    else {
-        $ompCache = Join-Path $cacheDir 'omp-init.ps1'
-        $ompThemeMeta = Join-Path $cacheDir 'omp-theme.txt'
-        $theme = Resolve-OhMyPoshTheme
-
-        if ($theme) {
-            $cachedTheme = if (Test-Path -LiteralPath $ompThemeMeta -PathType Leaf) {
-                ([string](Get-Content -LiteralPath $ompThemeMeta -Raw -ErrorAction SilentlyContinue)).Trim()
-            } else { $null }
-
-            if (-not (Test-Path -LiteralPath $ompCache -PathType Leaf) -or $cachedTheme -ne $theme) {
-                Update-InitCache -Tool 'oh-my-posh'
-            }
-
-            if (Test-Path -LiteralPath $ompCache -PathType Leaf) {
-                . $ompCache
-            }
-        }
-        elseif (Test-Command oh-my-posh) {
-            Write-Warning 'Oh My Posh theme not found. Run setup.ps1 to install cobalt2.omp.json.'
-        }
+    elseif (Test-Command oh-my-posh) {
+        Write-Warning 'Oh My Posh theme not found. Run setup.ps1 to install cobalt2.omp.json.'
     }
 
     # 2. zoxide (Cached)
@@ -632,13 +605,6 @@ function Set-PSReadLineOptionsCompat {
 function Set-PredictionSource {
     [CmdletBinding(SupportsShouldProcess)]
     param()
-
-    if (Get-Command -Name 'Set-PredictionSource_Override' -ErrorAction SilentlyContinue) {
-        if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set prediction source (override)')) {
-            Set-PredictionSource_Override @PSBoundParameters
-        }
-        return
-    }
 
     if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set prediction source')) {
         if ($PSVersionTable.PSEdition -eq 'Core') {
@@ -803,11 +769,6 @@ function winutil {
 }
 
 function winutildev {
-    if (Get-Command -Name 'WinUtilDev_Override' -ErrorAction SilentlyContinue) {
-        WinUtilDev_Override @args
-        return
-    }
-
     & ([ScriptBlock]::Create((Invoke-RestMethod -Uri 'https://christitus.com/windev'))) @args
 }
 
@@ -1375,23 +1336,6 @@ function pst { Get-Clipboard }
 # Module 50: Profile Updater, Maintenance & Startup Orchestration
 # ======================================================================
 
-function Debug-Message {
-    if (Get-Command -Name 'Debug-Message_Override' -ErrorAction SilentlyContinue) {
-        Debug-Message_Override
-        return
-    }
-
-    Write-Host '#######################################' -ForegroundColor Red
-    Write-Host '#           Debug mode enabled        #' -ForegroundColor Red
-    Write-Host '#          ONLY FOR DEVELOPMENT       #' -ForegroundColor Red
-    Write-Host '#       Run Update-Profile to reset   #' -ForegroundColor Red
-    Write-Host '#######################################' -ForegroundColor Red
-}
-
-if ($debug) {
-    Debug-Message
-}
-
 function Invoke-Profile {
     . $PROFILE.CurrentUserCurrentHost
 }
@@ -1435,11 +1379,6 @@ function Update-Profile {
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([bool])]
     param([switch]$Force)
-
-    if (Get-Command -Name 'Update-Profile_Override' -ErrorAction SilentlyContinue) {
-        Update-Profile_Override @PSBoundParameters
-        return $true
-    }
 
     if ((Test-ProfileIsSymlink) -and -not $Force) {
         if ($isInteractiveShell) {
@@ -1489,8 +1428,7 @@ function Update-Profile {
 }
 
 function Invoke-ScheduledProfileUpdate {
-    if ($debug -or
-        -not $isInteractiveShell -or
+    if (-not $isInteractiveShell -or
         (Test-ProfileIsSymlink) -or
         -not (Test-ProfileUpdateDue -Path $timeFilePath -IntervalDays $updateInterval)) {
         return
@@ -1515,11 +1453,6 @@ function Invoke-ScheduledProfileUpdate {
 function Update-PowerShell {
     [CmdletBinding(SupportsShouldProcess)]
     param()
-
-    if (Get-Command -Name 'Update-PowerShell_Override' -ErrorAction SilentlyContinue) {
-        Update-PowerShell_Override @PSBoundParameters
-        return
-    }
 
     if (-not (Test-Command winget)) {
         Write-Warning 'winget is required to update PowerShell automatically.'
@@ -1553,11 +1486,6 @@ function Update-PowerShell {
 function Clear-Cache {
     [CmdletBinding(SupportsShouldProcess)]
     param()
-
-    if (Get-Command -Name 'Clear-Cache_Override' -ErrorAction SilentlyContinue) {
-        Clear-Cache_Override @PSBoundParameters
-        return
-    }
 
     $paths = @(
         "$env:SystemRoot\Prefetch\*",
@@ -1627,9 +1555,6 @@ Register-CustomCompletion
 Initialize-OptionalModule
 Invoke-ScheduledProfileUpdate
 
-if ($showHelpOnLaunch) {
-    Show-Help
-}
-elseif ($isInteractiveShell) {
+if ($isInteractiveShell) {
     Write-Host "Use 'Show-Help' to display help" -ForegroundColor Yellow
 }

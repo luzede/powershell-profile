@@ -214,30 +214,25 @@ function Initialize-PromptTool {
     $cacheDir = Get-ProfileCacheDir
 
     # 1. Oh My Posh (Cached)
-    if (Get-Command -Name 'Get-Theme_Override' -ErrorAction SilentlyContinue) {
-        Get-Theme_Override
+    $ompCache = Join-Path $cacheDir 'omp-init.ps1'
+    $ompThemeMeta = Join-Path $cacheDir 'omp-theme.txt'
+    $theme = Resolve-OhMyPoshTheme
+
+    if ($theme) {
+        $cachedTheme = if (Test-Path -LiteralPath $ompThemeMeta -PathType Leaf) {
+            ([string](Get-Content -LiteralPath $ompThemeMeta -Raw -ErrorAction SilentlyContinue)).Trim()
+        } else { $null }
+
+        if (-not (Test-Path -LiteralPath $ompCache -PathType Leaf) -or $cachedTheme -ne $theme) {
+            Update-InitCache -Tool 'oh-my-posh'
+        }
+
+        if (Test-Path -LiteralPath $ompCache -PathType Leaf) {
+            . $ompCache
+        }
     }
-    else {
-        $ompCache = Join-Path $cacheDir 'omp-init.ps1'
-        $ompThemeMeta = Join-Path $cacheDir 'omp-theme.txt'
-        $theme = Resolve-OhMyPoshTheme
-
-        if ($theme) {
-            $cachedTheme = if (Test-Path -LiteralPath $ompThemeMeta -PathType Leaf) {
-                ([string](Get-Content -LiteralPath $ompThemeMeta -Raw -ErrorAction SilentlyContinue)).Trim()
-            } else { $null }
-
-            if (-not (Test-Path -LiteralPath $ompCache -PathType Leaf) -or $cachedTheme -ne $theme) {
-                Update-InitCache -Tool 'oh-my-posh'
-            }
-
-            if (Test-Path -LiteralPath $ompCache -PathType Leaf) {
-                . $ompCache
-            }
-        }
-        elseif (Test-Command oh-my-posh) {
-            Write-Warning 'Oh My Posh theme not found. Run setup.ps1 to install cobalt2.omp.json.'
-        }
+    elseif (Test-Command oh-my-posh) {
+        Write-Warning 'Oh My Posh theme not found. Run setup.ps1 to install cobalt2.omp.json.'
     }
 
     # 2. zoxide (Cached)

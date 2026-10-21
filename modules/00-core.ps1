@@ -1,5 +1,5 @@
 # ======================================================================
-# Module 00: Core Helpers, Overrides & Primitives
+# Module 00: Core Helpers & Primitives
 # ======================================================================
 
 function Enable-Tls12 {
@@ -91,31 +91,9 @@ function Get-ProfileCacheDir {
     Join-Path $cacheHome 'powershell'
 }
 
-$script:ProfileRoot = if ($PSScriptRoot) {
-    if ((Split-Path -Path $PSScriptRoot -Leaf) -eq 'modules') {
-        Split-Path -Path $PSScriptRoot -Parent
-    }
-    else {
-        $PSScriptRoot
-    }
-}
-else {
-    Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent
-}
-$script:CustomProfile = @(
-    (Join-Path -Path (Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent) -ChildPath 'CTTcustom.ps1'),
-    (Join-Path -Path $script:ProfileRoot -ChildPath 'CTTcustom.ps1')
-) | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-
-if ($script:CustomProfile) {
-    . $script:CustomProfile
-}
-
 $isInteractiveShell = Test-InteractiveShell
-$debug = if ($null -ne $debug_Override) { [bool]$debug_Override } else { $false }
-$repo_root = if ($repo_root_Override) { $repo_root_Override } else { 'https://raw.githubusercontent.com/luzede' }
+$repo_root = 'https://raw.githubusercontent.com/luzede'
 $profileDir = Get-ProfileDir
-$timeFilePath = if ($timeFilePath_Override) { $timeFilePath_Override } else { Join-Path $profileDir 'LastExecutionTime.txt' }
-$updateInterval = if ($null -ne $updateInterval_Override) { [int]$updateInterval_Override } else { 7 }
-$showHelpOnLaunch = if ($null -ne $show_help_Override) { [bool]$show_help_Override } else { $false }
+$timeFilePath = Join-Path $profileDir 'LastExecutionTime.txt'
+$updateInterval = 7
 

@@ -21,13 +21,6 @@ function Set-PredictionSource {
     [CmdletBinding(SupportsShouldProcess)]
     param()
 
-    if (Get-Command -Name 'Set-PredictionSource_Override' -ErrorAction SilentlyContinue) {
-        if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set prediction source (override)')) {
-            Set-PredictionSource_Override @PSBoundParameters
-        }
-        return
-    }
-
     if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set prediction source')) {
         if ($PSVersionTable.PSEdition -eq 'Core') {
             Set-PSReadLineOption -PredictionSource HistoryAndPlugin

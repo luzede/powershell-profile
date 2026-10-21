@@ -2,23 +2,6 @@
 # Module 50: Profile Updater, Maintenance & Startup Orchestration
 # ======================================================================
 
-function Debug-Message {
-    if (Get-Command -Name 'Debug-Message_Override' -ErrorAction SilentlyContinue) {
-        Debug-Message_Override
-        return
-    }
-
-    Write-Host '#######################################' -ForegroundColor Red
-    Write-Host '#           Debug mode enabled        #' -ForegroundColor Red
-    Write-Host '#          ONLY FOR DEVELOPMENT       #' -ForegroundColor Red
-    Write-Host '#       Run Update-Profile to reset   #' -ForegroundColor Red
-    Write-Host '#######################################' -ForegroundColor Red
-}
-
-if ($debug) {
-    Debug-Message
-}
-
 function Invoke-Profile {
     . $PROFILE.CurrentUserCurrentHost
 }
@@ -62,11 +45,6 @@ function Update-Profile {
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([bool])]
     param([switch]$Force)
-
-    if (Get-Command -Name 'Update-Profile_Override' -ErrorAction SilentlyContinue) {
-        Update-Profile_Override @PSBoundParameters
-        return $true
-    }
 
     if ((Test-ProfileIsSymlink) -and -not $Force) {
         if ($isInteractiveShell) {
@@ -116,8 +94,7 @@ function Update-Profile {
 }
 
 function Invoke-ScheduledProfileUpdate {
-    if ($debug -or
-        -not $isInteractiveShell -or
+    if (-not $isInteractiveShell -or
         (Test-ProfileIsSymlink) -or
         -not (Test-ProfileUpdateDue -Path $timeFilePath -IntervalDays $updateInterval)) {
         return
@@ -142,11 +119,6 @@ function Invoke-ScheduledProfileUpdate {
 function Update-PowerShell {
     [CmdletBinding(SupportsShouldProcess)]
     param()
-
-    if (Get-Command -Name 'Update-PowerShell_Override' -ErrorAction SilentlyContinue) {
-        Update-PowerShell_Override @PSBoundParameters
-        return
-    }
 
     if (-not (Test-Command winget)) {
         Write-Warning 'winget is required to update PowerShell automatically.'
@@ -180,11 +152,6 @@ function Update-PowerShell {
 function Clear-Cache {
     [CmdletBinding(SupportsShouldProcess)]
     param()
-
-    if (Get-Command -Name 'Clear-Cache_Override' -ErrorAction SilentlyContinue) {
-        Clear-Cache_Override @PSBoundParameters
-        return
-    }
 
     $paths = @(
         "$env:SystemRoot\Prefetch\*",
@@ -254,10 +221,7 @@ Register-CustomCompletion
 Initialize-OptionalModule
 Invoke-ScheduledProfileUpdate
 
-if ($showHelpOnLaunch) {
-    Show-Help
-}
-elseif ($isInteractiveShell) {
+if ($isInteractiveShell) {
     Write-Host "Use 'Show-Help' to display help" -ForegroundColor Yellow
 }
 

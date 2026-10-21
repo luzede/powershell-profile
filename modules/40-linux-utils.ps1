@@ -49,11 +49,6 @@ function winutil {
 }
 
 function winutildev {
-    if (Get-Command -Name 'WinUtilDev_Override' -ErrorAction SilentlyContinue) {
-        WinUtilDev_Override @args
-        return
-    }
-
     & ([ScriptBlock]::Create((Invoke-RestMethod -Uri 'https://christitus.com/windev'))) @args
 }
 
