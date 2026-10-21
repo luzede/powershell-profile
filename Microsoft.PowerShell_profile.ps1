@@ -94,48 +94,42 @@ function Get-ProfileCacheDir {
     Join-Path $cacheHome 'powershell'
 }
 
+function Get-ProfileCustomDir {
+    Join-Path (Get-ProfileDir) 'Custom'
+}
+
 $isInteractiveShell = Test-InteractiveShell
 $repo_root = 'https://raw.githubusercontent.com/luzede'
 $profileDir = Get-ProfileDir
-$timeFilePath = Join-Path $profileDir 'LastExecutionTime.txt'
+$timeFilePath = Join-Path (Get-ProfileCacheDir) 'LastExecutionTime.txt'
 $updateInterval = 7
 
 # ======================================================================
-# Module 10: XDG Base Directory & Tool Environment Provisioning
+# Module 10: XDG Base Directory Provisioning
 # ======================================================================
 
-# * COMMON ENVIRONMENT VARIABLES AND SETTINGS FOR INSTALLED TOOLS *
-# **********************************************************************
-# XDG is a set of standards for defining where user data files,
-# configuration files, cache files, and other types of files should be stored.
+# XDG Base Directory Specification defaults for user binaries, configs, data, cache, and state.
 if (-not $env:XDG_BIN_HOME)    { $env:XDG_BIN_HOME    = "$HOME\.local\bin" }
 if (-not $env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME = "$HOME\.config" }
 if (-not $env:XDG_DATA_HOME)   { $env:XDG_DATA_HOME   = "$HOME\.local\share" }
 if (-not $env:XDG_CACHE_HOME)  { $env:XDG_CACHE_HOME  = "$HOME\.cache" }
 if (-not $env:XDG_STATE_HOME)  { $env:XDG_STATE_HOME  = "$HOME\.local\state" }
 
-# Fast in-session defaults in case persistent User environment has not been inherited yet
-if (-not $env:LESSHISTFILE)                { $env:LESSHISTFILE                = "$env:XDG_CONFIG_HOME\less\_lesshst" }
-if (-not $env:BUN_INSTALL)                 { $env:BUN_INSTALL                 = "$env:XDG_DATA_HOME\bun" }
-if (-not $env:BUN_INSTALL_GLOBAL_DIR)      { $env:BUN_INSTALL_GLOBAL_DIR      = "$env:XDG_DATA_HOME\bun\global" }
-if (-not $env:BUN_INSTALL_BIN)             { $env:BUN_INSTALL_BIN             = "$env:XDG_DATA_HOME\bun\bin" }
-if (-not $env:AWS_SHARED_CREDENTIALS_FILE) { $env:AWS_SHARED_CREDENTIALS_FILE = "$env:XDG_CONFIG_HOME\aws\credentials" }
-if (-not $env:AWS_CONFIG_FILE)             { $env:AWS_CONFIG_FILE             = "$env:XDG_CONFIG_HOME\aws\config" }
-if (-not $env:AZURE_CONFIG_DIR)            { $env:AZURE_CONFIG_DIR            = "$env:XDG_DATA_HOME\azure" }
-if (-not $env:RUSTUP_HOME)                 { $env:RUSTUP_HOME                 = "$env:XDG_DATA_HOME\rustup" }
-if (-not $env:CARGO_HOME)                  { $env:CARGO_HOME                  = "$env:XDG_DATA_HOME\cargo" }
-if (-not $env:CLAUDE_CONFIG_DIR)           { $env:CLAUDE_CONFIG_DIR           = "$env:XDG_CONFIG_HOME\claude" }
+if ((Test-Path -LiteralPath $env:XDG_BIN_HOME -PathType Container) -and (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME)) {
+    $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
+}
 
 function Initialize-XdgEnvironment {
     <#
     .SYNOPSIS
-        One-time provisioning of persistent User environment variables and XDG directories.
-        Run automatically on first setup or manually whenever tool paths need to be repaired.
+        One-time provisioning of persistent User XDG base environment variables and directories.
+        Run automatically on first setup or manually with -Force to repair paths.
     #>
     [CmdletBinding()]
     param([switch]$Force)
 
     $cacheDir = Get-ProfileCacheDir
+    $customDir = Get-ProfileCustomDir
     $sentinelFile = Join-Path $cacheDir '.xdg-initialized'
     if (-not $Force -and (Test-Path -LiteralPath $sentinelFile -PathType Leaf)) {
         return
@@ -147,136 +141,6 @@ function Initialize-XdgEnvironment {
     Set-PersistentEnv 'XDG_CACHE_HOME' $env:XDG_CACHE_HOME
     Set-PersistentEnv 'XDG_STATE_HOME' $env:XDG_STATE_HOME
 
-    ########################################################################
-    # ===================================
-    # Name: less
-    # Winget: jftuga.less
-    # Link: https://github.com/jftuga/less-Windows
-    # Description:
-    #   Because I didn't like that it was creating the "_lesshst" file
-    #   in the user's folder, I am changing the environment variable
-    #   and creating a specified folder for it in ".config/less"
-    #   so that "_lesshst" will be created there
-    #
-    #   Also "less" is installed because it helps "bat" command and is
-    #   more feature full than the powershell equivalent.
-    # ===================================
-    $lessConfigDir = "$env:XDG_CONFIG_HOME\less"
-    $lessHistFile = Join-Path $lessConfigDir '_lesshst'
-    Set-PersistentEnv 'LESSHISTFILE' $lessHistFile
-    # ===================================
-    ########################################################################
-
-    ########################################################################
-    # ===================================
-    # Name: Git
-    # Winget: Git.Git
-    # Link: https://git-scm.com/
-    # Description:
-    #   I don't like that git creates the ".gitconfig"
-    #   file in the user's folder, so I create and use the "config"
-    #   file in ".config/git" because git website says
-    #   "write to $XDG_CONFIG_HOME/git/config file if this file exists and the
-    #   ~/.gitconfig file doesn’t"
-    # ===================================
-    $gitConfigDir = "$env:XDG_CONFIG_HOME\git"
-    $gitConfigFile = "$gitConfigDir\config"
-    # ===================================
-    ########################################################################
-
-    # ########################################################################
-    # # ===================================
-    # # Name: docker
-    # # Winget: Docker.DockerDesktop
-    # # Link: https://www.docker.com/products/docker-desktop/
-    # # Description:
-    # #   I want docker config to be in XDG_CONFIG_HOME as well,
-    # #   instead of the user's folder at "~/.docker"
-    # # ===================================
-    # # Set the DOCKER_CONFIG environment variable to point to the new directory
-    # $dockerConfigDir = "$env:XDG_CONFIG_HOME\docker"
-    # $env:DOCKER_CONFIG = $dockerConfigDir
-    # ! RIGHT NOW THERE IS NO WAY TO STOP DOCKER DESKTOP FROM CREATING THE ".docker" FOLDER
-    # ! SO THIS IS COMMENTED OUT FOR NOW UNTIL A SOLUTION IS FOUND
-    # # ===================================
-    # ########################################################################
-
-    ########################################################################
-    # ===================================
-    # Name: bun
-    # Winget:
-    # Link: https://bun.com/docs/installation#windows
-    # Description:
-    #   Where to install bun, I want it to follow XDG specification
-    # ===================================
-    Set-PersistentEnv 'BUN_INSTALL' "$env:XDG_DATA_HOME\bun"
-    Set-PersistentEnv 'BUN_INSTALL_GLOBAL_DIR' "$env:XDG_DATA_HOME\bun\global"
-    Set-PersistentEnv 'BUN_INSTALL_BIN' "$env:XDG_DATA_HOME\bun\bin"
-    # ===================================
-    ########################################################################
-
-    ########################################################################
-    # ===================================
-    # Name: aws
-    # Winget: Amazon.AWSCLI
-    # Link: https://aws.amazon.com/cli/
-    # Description:
-    #   I don't like that aws cli creates the ".aws" folder
-    #   in the user's folder, so I am changing the environment variables
-    #   to follow XDG Base Directory Specification
-    # ===================================
-    $awsConfigDir = "$env:XDG_CONFIG_HOME\aws"
-    Set-PersistentEnv 'AWS_SHARED_CREDENTIALS_FILE' "$awsConfigDir\credentials"
-    Set-PersistentEnv 'AWS_CONFIG_FILE' "$awsConfigDir\config"
-    # ===================================
-    ########################################################################
-
-    ########################################################################
-    # ===================================
-    # Name: azure-cli
-    # Winget: Microsoft.AzureCLI
-    # Link: https://learn.microsoft.com/en-us/cli/azure/
-    # Description:
-    #   I don't like that azure cli creates the ".azure" folder
-    #   in the user's folder, so I am changing the environment variable
-    #   to follow XDG Base Directory Specification
-    # ===================================
-    $azureConfigDir = "$env:XDG_DATA_HOME\azure"
-    Set-PersistentEnv 'AZURE_CONFIG_DIR' $azureConfigDir
-    # ===================================
-    ########################################################################
-
-    ########################################################################
-    # ===================================
-    # Name: Rust, Cargo and Rustup
-    # Winget: Rustlang.Rustup
-    # Link: https://www.rust-lang.org/learn/get-started
-    # Description:
-    #   I don't like that Rust, Cargo, and Rustup create the ".cargo" and ".rustup" folders
-    #   in the user's folder, so I am changing the environment variables
-    #   to follow XDG Base Directory Specification
-    # ===================================
-    $rustupConfigDir = "$env:XDG_DATA_HOME\rustup"
-    $cargoConfigDir = "$env:XDG_DATA_HOME\cargo"
-    Set-PersistentEnv 'RUSTUP_HOME' $rustupConfigDir
-    Set-PersistentEnv 'CARGO_HOME' $cargoConfigDir
-    # ===================================
-    ########################################################################
-
-    ########################################################################
-    # ===================================
-    # Name: Claude Code
-    # Winget: Anthropic.ClaudeCode
-    # Link: https://claude.ai/code
-    # Description:
-    #   I don't like that Claude Code creates '~/.claude' folder
-    #   in the user's folder, so I am changing the environment variable
-    # ===================================
-    $claudeConfigDir = "$env:XDG_CONFIG_HOME\claude"
-    Set-PersistentEnv 'CLAUDE_CONFIG_DIR' $claudeConfigDir
-    # ===================================
-    ########################################################################
-
     $directories = @(
         $env:XDG_BIN_HOME,
         $env:XDG_CONFIG_HOME,
@@ -284,26 +148,13 @@ function Initialize-XdgEnvironment {
         $env:XDG_CACHE_HOME,
         $env:XDG_STATE_HOME,
         $cacheDir,
-        $lessConfigDir,
-        $gitConfigDir,
-        "$env:XDG_DATA_HOME\bun",
-        "$env:XDG_DATA_HOME\bun\global",
-        "$env:XDG_DATA_HOME\bun\bin",
-        $awsConfigDir,
-        $azureConfigDir,
-        $rustupConfigDir,
-        $cargoConfigDir,
-        $claudeConfigDir
+        $customDir
     )
 
     foreach ($dir in $directories) {
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
             New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
         }
-    }
-
-    if (-not (Test-Path -LiteralPath $gitConfigFile -PathType Leaf)) {
-        New-Item -ItemType File -Path $gitConfigFile -Force -ErrorAction Stop | Out-Null
     }
 
     Get-Date -Format 'o' | Set-Content -LiteralPath $sentinelFile -Encoding UTF8 -ErrorAction Stop
@@ -313,13 +164,15 @@ function Initialize-XdgEnvironment {
 if (-not (Test-Path -LiteralPath (Join-Path (Get-ProfileCacheDir) '.xdg-initialized') -PathType Leaf)) {
     Initialize-XdgEnvironment
 }
-# **********************************************************************
 
 # ======================================================================
 # Module 20: Prompt, Themes & Cached Tool Initialization
 # ======================================================================
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $global:RegisteredCachedInits) {
+    $global:RegisteredCachedInits = @{}
+}
 
 if ($isInteractiveShell) {
     try {
@@ -405,15 +258,113 @@ function Resolve-OhMyPoshTheme {
     return $null
 }
 
-function Update-InitCache {
+function Use-CachedInit {
     <#
     .SYNOPSIS
-        Generates or refreshes cached initialization scripts for oh-my-posh, zoxide, and mise.
-        Pre-computes static prompt values and strips redundant synchronous CLI calls.
+        Caches the output of a CLI initialization scriptblock to a file and dot-sources it.
+        Automatically rebuilt when Clear-InitCache is run or when -Force is passed.
+    .EXAMPLE
+        Use-CachedInit -Name 'mise' -Command { mise activate pwsh }
+    .EXAMPLE
+        Use-CachedInit -Name 'fnm' -Command { fnm env --use-on-cd --shell power-shell }
     #>
     [CmdletBinding()]
     param(
-        [ValidateSet('All', 'oh-my-posh', 'zoxide', 'mise')]
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[a-zA-Z0-9._-]+$')]
+        [string]$Name,
+
+        [Parameter(Mandatory)]
+        [scriptblock]$Command,
+
+        [switch]$Force,
+
+        [switch]$NoLoad
+    )
+
+    $key = $Name.ToLower()
+    $global:RegisteredCachedInits[$key] = $Command
+
+    $cacheDir = Get-ProfileCacheDir
+    $cacheFile = Join-Path $cacheDir "$key-init.ps1"
+
+    if ($Force -or -not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
+        if (-not (Test-Path -LiteralPath $cacheDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $cacheDir -Force -ErrorAction Stop | Out-Null
+        }
+
+        $global:LASTEXITCODE = 0
+        $rawLines = @(& $Command)
+        if ($LASTEXITCODE -ne 0 -or $rawLines.Count -eq 0) {
+            Write-Warning "Failed to generate '$key' init cache (exit code: $LASTEXITCODE)."
+            return
+        }
+
+        $baselinePaths = @(
+            ([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';'),
+            ([Environment]::GetEnvironmentVariable('Path', 'User') -split ';'),
+            $env:XDG_BIN_HOME
+        ) | ForEach-Object { $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+        $transformedLines = $rawLines | ForEach-Object {
+            if ($_ -match '^\$Env:PATH\s*=\s*[''"]([^''"]+)[''"]') {
+                # Convert static PATH snapshot into non-destructive dynamic prepend against persistent Machine/User PATH
+                $capturedPaths = $Matches[1] -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                $addedPaths = @($capturedPaths | Where-Object { $baselinePaths -notcontains $_ })
+                if ($addedPaths.Count -gt 0) {
+                    foreach ($p in $addedPaths) {
+                        $escapedPath = $p -replace "'", "''"
+                        "if ((Test-Path -LiteralPath '$escapedPath' -PathType Container) -and ((`$env:PATH -split ';') -notcontains '$escapedPath')) { `$env:PATH = '$escapedPath;' + `$env:PATH }"
+                    }
+                }
+            }
+            elseif ($_ -match '^function\s+(?!([Gg]lobal|[Ss]cript):)(?!__enable_)([A-Za-z0-9_-]+)') {
+                $_ -replace '^function\s+', 'function global:'
+            }
+            else {
+                $_.Replace(
+                    'if ([Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems()[-1].CommandLine',
+                    '$__hist = [Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems(); if ($__hist -and $__hist[-1].CommandLine'
+                )
+            }
+        }
+
+        ($transformedLines -join "`n") | Set-Content -LiteralPath $cacheFile -Encoding UTF8 -ErrorAction Stop
+    }
+
+    if (-not $NoLoad -and $isInteractiveShell -and (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
+        $__existingVars = @{}
+        foreach ($__v in (Get-Variable -Scope Local)) {
+            $__existingVars[$__v.Name] = $true
+        }
+
+        . $cacheFile
+
+        foreach ($__v in (Get-Variable -Scope Local)) {
+            if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -ne '__existingVars') {
+                Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
+            }
+        }
+        foreach ($__fn in (Get-ChildItem -Path Function:\)) {
+            if ($__fn.Name -ne 'Use-CachedInit') {
+                Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
+            }
+        }
+        foreach ($__al in (Get-Alias)) {
+            if ($__al.Options -notmatch 'ReadOnly|Constant') {
+                Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+function Update-InitCache {
+    <#
+    .SYNOPSIS
+        Generates or refreshes cached initialization scripts for oh-my-posh, zoxide, and any custom Use-CachedInit tools.
+    #>
+    [CmdletBinding()]
+    param(
         [string]$Tool = 'All'
     )
 
@@ -464,43 +415,10 @@ function Update-InitCache {
         }
     }
 
-    if ($Tool -in @('All', 'mise')) {
-        $miseApp = Get-Command -Name 'mise' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($miseApp) {
-            $miseCache = Join-Path $cacheDir 'mise-init.ps1'
-            $rawMiseLines = @(& $miseApp.Source activate pwsh)
-            if ($LASTEXITCODE -ne 0 -or $rawMiseLines.Count -eq 0) {
-                Write-Warning "Failed to generate mise init cache (exit code: $LASTEXITCODE)."
-            }
-            else {
-                # 1. Replace hardcoded PATH snapshot with dynamic shims injection so new system PATH entries are never overwritten
-                $dynamicPathBlock = @'
-$__miseShims = Join-Path $env:LOCALAPPDATA 'mise\shims'
-if ((Test-Path -LiteralPath $__miseShims -PathType Container) -and (($env:PATH -split ';') -notcontains $__miseShims)) {
-    $env:PATH = "$__miseShims;$env:PATH"
-}
-'@
-
-                # 2. Transform lines: dynamic PATH, global function scope, defer initial top-level _mise_hook to prompt, and guard empty PSReadLine history
-                $miseLines = $rawMiseLines | ForEach-Object {
-                    if ($_ -like '$Env:PATH=*') {
-                        $dynamicPathBlock
-                    }
-                    elseif ($_ -eq '_mise_hook') {
-                        '# _mise_hook deferred to prompt/chpwd hook'
-                    }
-                    elseif ($_ -match '^function\s+(?!([Gg]lobal|[Ss]cript):)(?!__enable_)([A-Za-z0-9_-]+)') {
-                        $_ -replace '^function\s+', 'function global:'
-                    }
-                    else {
-                        $_.Replace(
-                            'if ([Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems()[-1].CommandLine',
-                            '$__hist = [Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems(); if ($__hist -and $__hist[-1].CommandLine'
-                        )
-                    }
-                }
-
-                ($miseLines -join "`n") | Set-Content -LiteralPath $miseCache -Encoding UTF8 -ErrorAction Stop
+    if ($global:RegisteredCachedInits -and $global:RegisteredCachedInits.Count -gt 0) {
+        foreach ($entry in @($global:RegisteredCachedInits.GetEnumerator())) {
+            if ($Tool -in @('All', $entry.Key)) {
+                Use-CachedInit -Name $entry.Key -Command $entry.Value -Force -NoLoad
             }
         }
     }
@@ -509,7 +427,7 @@ if ((Test-Path -LiteralPath $__miseShims -PathType Container) -and (($env:PATH -
 function Clear-InitCache {
     <#
     .SYNOPSIS
-        Clears and regenerates cached shell startup scripts for oh-my-posh, zoxide, and mise.
+        Clears and regenerates cached shell startup scripts for oh-my-posh, zoxide, and any custom Use-CachedInit tools.
     #>
     [CmdletBinding()]
     param()
@@ -560,27 +478,6 @@ function Initialize-PromptTool {
     if (Test-Path -LiteralPath $zoxideCache -PathType Leaf) {
         . $zoxideCache
     }
-
-    ########################################################################
-    # ===================================
-    # Name: mise-en-place
-    # Winget: jdx.mise
-    # Link: https://github.com/jdx/mise
-    # Description:
-    #   Tools version management, this script activates the mise tool
-    #   automatically whenever you open powershell so you can have access
-    #   to global installed version of tools or the local one if configuration
-    #   for it exists.
-    # ===================================
-    $miseCache = Join-Path $cacheDir 'mise-init.ps1'
-    if (-not (Test-Path -LiteralPath $miseCache -PathType Leaf)) {
-        Update-InitCache -Tool 'mise'
-    }
-    if (Test-Path -LiteralPath $miseCache -PathType Leaf) {
-        . $miseCache
-    }
-    # ===================================
-    ########################################################################
 }
 
 # ======================================================================
@@ -700,20 +597,13 @@ function Initialize-OptionalModule {
         return
     }
 
-    # Defer heavy Terminal-Icons and Chocolatey module imports to OnIdle so prompt renders immediately
+    # Defer heavy Terminal-Icons module import to OnIdle so prompt renders immediately
     Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -Action {
         try {
             Import-Module -Name Terminal-Icons -Global -ErrorAction Stop
         }
         catch {
             Write-Verbose "Terminal-Icons module is not installed: $_"
-        }
-
-        if ($env:ChocolateyInstall) {
-            $chocolateyProfile = Join-Path $env:ChocolateyInstall 'helpers\chocolateyProfile.psm1'
-            if (Test-Path -LiteralPath $chocolateyProfile -PathType Leaf) {
-                Import-Module $chocolateyProfile -Global -ErrorAction SilentlyContinue
-            }
         }
     } | Out-Null
 }
@@ -1540,7 +1430,8 @@ Profile & Environment:
   Update-Profile            Check for profile updates.
   Update-PowerShell         Check for the latest PowerShell release and update with winget.
   Set-Theme <theme>         Download and set the Oh My Posh theme.
-  Clear-InitCache           Rebuild cached startup scripts (oh-my-posh, zoxide, mise).
+  Use-CachedInit <n> <sb>   Cache and load a CLI tool initializer (e.g., mise, fnm).
+  Clear-InitCache           Rebuild cached startup scripts.
   Initialize-XdgEnvironment Provision persistent XDG environment variables and directories.
 
 Linux / Shell Utilities:
@@ -1574,9 +1465,19 @@ System & Shortcuts:
 '@ | Write-Host
 }
 
+function Initialize-CustomProfile {
+    $customDir = Get-ProfileCustomDir
+    if (Test-Path -LiteralPath $customDir -PathType Container) {
+        foreach ($customFile in (Get-ChildItem -LiteralPath $customDir -Filter '*.ps1' -File | Sort-Object Name)) {
+            . $customFile.FullName
+        }
+    }
+}
+
 Initialize-PSReadLine
 Register-CustomCompletion
 . Initialize-PromptTool
+. Initialize-CustomProfile
 Initialize-OptionalModule
 Invoke-ScheduledProfileUpdate
 

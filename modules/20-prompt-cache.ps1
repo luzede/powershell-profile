@@ -3,6 +3,9 @@
 # ======================================================================
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $global:RegisteredCachedInits) {
+    $global:RegisteredCachedInits = @{}
+}
 
 if ($isInteractiveShell) {
     try {
@@ -88,15 +91,113 @@ function Resolve-OhMyPoshTheme {
     return $null
 }
 
-function Update-InitCache {
+function Use-CachedInit {
     <#
     .SYNOPSIS
-        Generates or refreshes cached initialization scripts for oh-my-posh, zoxide, and mise.
-        Pre-computes static prompt values and strips redundant synchronous CLI calls.
+        Caches the output of a CLI initialization scriptblock to a file and dot-sources it.
+        Automatically rebuilt when Clear-InitCache is run or when -Force is passed.
+    .EXAMPLE
+        Use-CachedInit -Name 'mise' -Command { mise activate pwsh }
+    .EXAMPLE
+        Use-CachedInit -Name 'fnm' -Command { fnm env --use-on-cd --shell power-shell }
     #>
     [CmdletBinding()]
     param(
-        [ValidateSet('All', 'oh-my-posh', 'zoxide', 'mise')]
+        [Parameter(Mandatory)]
+        [ValidatePattern('^[a-zA-Z0-9._-]+$')]
+        [string]$Name,
+
+        [Parameter(Mandatory)]
+        [scriptblock]$Command,
+
+        [switch]$Force,
+
+        [switch]$NoLoad
+    )
+
+    $key = $Name.ToLower()
+    $global:RegisteredCachedInits[$key] = $Command
+
+    $cacheDir = Get-ProfileCacheDir
+    $cacheFile = Join-Path $cacheDir "$key-init.ps1"
+
+    if ($Force -or -not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
+        if (-not (Test-Path -LiteralPath $cacheDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $cacheDir -Force -ErrorAction Stop | Out-Null
+        }
+
+        $global:LASTEXITCODE = 0
+        $rawLines = @(& $Command)
+        if ($LASTEXITCODE -ne 0 -or $rawLines.Count -eq 0) {
+            Write-Warning "Failed to generate '$key' init cache (exit code: $LASTEXITCODE)."
+            return
+        }
+
+        $baselinePaths = @(
+            ([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';'),
+            ([Environment]::GetEnvironmentVariable('Path', 'User') -split ';'),
+            $env:XDG_BIN_HOME
+        ) | ForEach-Object { $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+        $transformedLines = $rawLines | ForEach-Object {
+            if ($_ -match '^\$Env:PATH\s*=\s*[''"]([^''"]+)[''"]') {
+                # Convert static PATH snapshot into non-destructive dynamic prepend against persistent Machine/User PATH
+                $capturedPaths = $Matches[1] -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                $addedPaths = @($capturedPaths | Where-Object { $baselinePaths -notcontains $_ })
+                if ($addedPaths.Count -gt 0) {
+                    foreach ($p in $addedPaths) {
+                        $escapedPath = $p -replace "'", "''"
+                        "if ((Test-Path -LiteralPath '$escapedPath' -PathType Container) -and ((`$env:PATH -split ';') -notcontains '$escapedPath')) { `$env:PATH = '$escapedPath;' + `$env:PATH }"
+                    }
+                }
+            }
+            elseif ($_ -match '^function\s+(?!([Gg]lobal|[Ss]cript):)(?!__enable_)([A-Za-z0-9_-]+)') {
+                $_ -replace '^function\s+', 'function global:'
+            }
+            else {
+                $_.Replace(
+                    'if ([Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems()[-1].CommandLine',
+                    '$__hist = [Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems(); if ($__hist -and $__hist[-1].CommandLine'
+                )
+            }
+        }
+
+        ($transformedLines -join "`n") | Set-Content -LiteralPath $cacheFile -Encoding UTF8 -ErrorAction Stop
+    }
+
+    if (-not $NoLoad -and $isInteractiveShell -and (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
+        $__existingVars = @{}
+        foreach ($__v in (Get-Variable -Scope Local)) {
+            $__existingVars[$__v.Name] = $true
+        }
+
+        . $cacheFile
+
+        foreach ($__v in (Get-Variable -Scope Local)) {
+            if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -ne '__existingVars') {
+                Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
+            }
+        }
+        foreach ($__fn in (Get-ChildItem -Path Function:\)) {
+            if ($__fn.Name -ne 'Use-CachedInit') {
+                Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
+            }
+        }
+        foreach ($__al in (Get-Alias)) {
+            if ($__al.Options -notmatch 'ReadOnly|Constant') {
+                Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+function Update-InitCache {
+    <#
+    .SYNOPSIS
+        Generates or refreshes cached initialization scripts for oh-my-posh, zoxide, and any custom Use-CachedInit tools.
+    #>
+    [CmdletBinding()]
+    param(
         [string]$Tool = 'All'
     )
 
@@ -147,43 +248,10 @@ function Update-InitCache {
         }
     }
 
-    if ($Tool -in @('All', 'mise')) {
-        $miseApp = Get-Command -Name 'mise' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($miseApp) {
-            $miseCache = Join-Path $cacheDir 'mise-init.ps1'
-            $rawMiseLines = @(& $miseApp.Source activate pwsh)
-            if ($LASTEXITCODE -ne 0 -or $rawMiseLines.Count -eq 0) {
-                Write-Warning "Failed to generate mise init cache (exit code: $LASTEXITCODE)."
-            }
-            else {
-                # 1. Replace hardcoded PATH snapshot with dynamic shims injection so new system PATH entries are never overwritten
-                $dynamicPathBlock = @'
-$__miseShims = Join-Path $env:LOCALAPPDATA 'mise\shims'
-if ((Test-Path -LiteralPath $__miseShims -PathType Container) -and (($env:PATH -split ';') -notcontains $__miseShims)) {
-    $env:PATH = "$__miseShims;$env:PATH"
-}
-'@
-
-                # 2. Transform lines: dynamic PATH, global function scope, defer initial top-level _mise_hook to prompt, and guard empty PSReadLine history
-                $miseLines = $rawMiseLines | ForEach-Object {
-                    if ($_ -like '$Env:PATH=*') {
-                        $dynamicPathBlock
-                    }
-                    elseif ($_ -eq '_mise_hook') {
-                        '# _mise_hook deferred to prompt/chpwd hook'
-                    }
-                    elseif ($_ -match '^function\s+(?!([Gg]lobal|[Ss]cript):)(?!__enable_)([A-Za-z0-9_-]+)') {
-                        $_ -replace '^function\s+', 'function global:'
-                    }
-                    else {
-                        $_.Replace(
-                            'if ([Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems()[-1].CommandLine',
-                            '$__hist = [Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems(); if ($__hist -and $__hist[-1].CommandLine'
-                        )
-                    }
-                }
-
-                ($miseLines -join "`n") | Set-Content -LiteralPath $miseCache -Encoding UTF8 -ErrorAction Stop
+    if ($global:RegisteredCachedInits -and $global:RegisteredCachedInits.Count -gt 0) {
+        foreach ($entry in @($global:RegisteredCachedInits.GetEnumerator())) {
+            if ($Tool -in @('All', $entry.Key)) {
+                Use-CachedInit -Name $entry.Key -Command $entry.Value -Force -NoLoad
             }
         }
     }
@@ -192,7 +260,7 @@ if ((Test-Path -LiteralPath $__miseShims -PathType Container) -and (($env:PATH -
 function Clear-InitCache {
     <#
     .SYNOPSIS
-        Clears and regenerates cached shell startup scripts for oh-my-posh, zoxide, and mise.
+        Clears and regenerates cached shell startup scripts for oh-my-posh, zoxide, and any custom Use-CachedInit tools.
     #>
     [CmdletBinding()]
     param()
@@ -243,25 +311,4 @@ function Initialize-PromptTool {
     if (Test-Path -LiteralPath $zoxideCache -PathType Leaf) {
         . $zoxideCache
     }
-
-    ########################################################################
-    # ===================================
-    # Name: mise-en-place
-    # Winget: jdx.mise
-    # Link: https://github.com/jdx/mise
-    # Description:
-    #   Tools version management, this script activates the mise tool
-    #   automatically whenever you open powershell so you can have access
-    #   to global installed version of tools or the local one if configuration
-    #   for it exists.
-    # ===================================
-    $miseCache = Join-Path $cacheDir 'mise-init.ps1'
-    if (-not (Test-Path -LiteralPath $miseCache -PathType Leaf)) {
-        Update-InitCache -Tool 'mise'
-    }
-    if (Test-Path -LiteralPath $miseCache -PathType Leaf) {
-        . $miseCache
-    }
-    # ===================================
-    ########################################################################
 }

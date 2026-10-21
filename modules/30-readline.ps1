@@ -115,20 +115,13 @@ function Initialize-OptionalModule {
         return
     }
 
-    # Defer heavy Terminal-Icons and Chocolatey module imports to OnIdle so prompt renders immediately
+    # Defer heavy Terminal-Icons module import to OnIdle so prompt renders immediately
     Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -Action {
         try {
             Import-Module -Name Terminal-Icons -Global -ErrorAction Stop
         }
         catch {
             Write-Verbose "Terminal-Icons module is not installed: $_"
-        }
-
-        if ($env:ChocolateyInstall) {
-            $chocolateyProfile = Join-Path $env:ChocolateyInstall 'helpers\chocolateyProfile.psm1'
-            if (Test-Path -LiteralPath $chocolateyProfile -PathType Leaf) {
-                Import-Module $chocolateyProfile -Global -ErrorAction SilentlyContinue
-            }
         }
     } | Out-Null
 }

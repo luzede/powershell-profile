@@ -91,9 +91,13 @@ function Get-ProfileCacheDir {
     Join-Path $cacheHome 'powershell'
 }
 
+function Get-ProfileCustomDir {
+    Join-Path (Get-ProfileDir) 'Custom'
+}
+
 $isInteractiveShell = Test-InteractiveShell
 $repo_root = 'https://raw.githubusercontent.com/luzede'
 $profileDir = Get-ProfileDir
-$timeFilePath = Join-Path $profileDir 'LastExecutionTime.txt'
+$timeFilePath = Join-Path (Get-ProfileCacheDir) 'LastExecutionTime.txt'
 $updateInterval = 7
 

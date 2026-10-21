@@ -206,7 +206,8 @@ Profile & Environment:
   Update-Profile            Check for profile updates.
   Update-PowerShell         Check for the latest PowerShell release and update with winget.
   Set-Theme <theme>         Download and set the Oh My Posh theme.
-  Clear-InitCache           Rebuild cached startup scripts (oh-my-posh, zoxide, mise).
+  Use-CachedInit <n> <sb>   Cache and load a CLI tool initializer (e.g., mise, fnm).
+  Clear-InitCache           Rebuild cached startup scripts.
   Initialize-XdgEnvironment Provision persistent XDG environment variables and directories.
 
 Linux / Shell Utilities:
@@ -240,9 +241,19 @@ System & Shortcuts:
 '@ | Write-Host
 }
 
+function Initialize-CustomProfile {
+    $customDir = Get-ProfileCustomDir
+    if (Test-Path -LiteralPath $customDir -PathType Container) {
+        foreach ($customFile in (Get-ChildItem -LiteralPath $customDir -Filter '*.ps1' -File | Sort-Object Name)) {
+            . $customFile.FullName
+        }
+    }
+}
+
 Initialize-PSReadLine
 Register-CustomCompletion
 . Initialize-PromptTool
+. Initialize-CustomProfile
 Initialize-OptionalModule
 Invoke-ScheduledProfileUpdate
 
