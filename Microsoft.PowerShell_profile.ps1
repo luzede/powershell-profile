@@ -98,10 +98,7 @@ function Get-ProfileCustomDir {
     Join-Path (Get-ProfileDir) 'Custom'
 }
 
-$isInteractiveShell = Test-InteractiveShell
-$repo_root = 'https://raw.githubusercontent.com/luzede'
-$timeFilePath = Join-Path (Get-ProfileCacheDir) 'LastExecutionTime.txt'
-$updateInterval = 7
+$script:isInteractiveShell = Test-InteractiveShell
 
 # ======================================================================
 # Module 10: XDG Base Directory Provisioning
@@ -1233,6 +1230,10 @@ function pst { Get-Clipboard }
 # ======================================================================
 # Module 50: Profile Updater, Maintenance & Startup Orchestration
 # ======================================================================
+
+$repo_root = 'https://raw.githubusercontent.com/luzede'
+$timeFilePath = Join-Path (Get-ProfileCacheDir) 'LastExecutionTime.txt'
+$updateInterval = 7
 
 function Test-ProfileUpdateDue {
     param(

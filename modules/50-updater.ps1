@@ -2,6 +2,10 @@
 # Module 50: Profile Updater, Maintenance & Startup Orchestration
 # ======================================================================
 
+$repo_root = 'https://raw.githubusercontent.com/luzede'
+$timeFilePath = Join-Path (Get-ProfileCacheDir) 'LastExecutionTime.txt'
+$updateInterval = 7
+
 function Test-ProfileUpdateDue {
     param(
         [Parameter(Mandatory)][string]$Path,

@@ -95,8 +95,5 @@ function Get-ProfileCustomDir {
     Join-Path (Get-ProfileDir) 'Custom'
 }
 
-$isInteractiveShell = Test-InteractiveShell
-$repo_root = 'https://raw.githubusercontent.com/luzede'
-$timeFilePath = Join-Path (Get-ProfileCacheDir) 'LastExecutionTime.txt'
-$updateInterval = 7
+$script:isInteractiveShell = Test-InteractiveShell
 
