@@ -818,7 +818,7 @@ function admin {
         Start-Process $shell -Verb RunAs -WorkingDirectory $cwd -ArgumentList $shellArgs
     }
 }
-Set-Alias -Name su -Value admin -Force
+Set-Alias -Name su -Value admin -Scope Global -Force
 
 function uptime {
     $boot = if (Get-Command Get-Uptime -ErrorAction SilentlyContinue) {
@@ -1338,6 +1338,17 @@ function pst { Get-Clipboard }
 
 function Invoke-Profile {
     . $PROFILE.CurrentUserCurrentHost
+
+    foreach ($fn in (Get-ChildItem -Path Function:\)) {
+        if ($fn.Name -ne 'Invoke-Profile') {
+            Set-Item -Path "Function:\global:$($fn.Name)" -Value $fn.ScriptBlock -Force
+        }
+    }
+    foreach ($al in (Get-Alias)) {
+        if ($al.Options -notmatch 'ReadOnly|Constant') {
+            Set-Alias -Name $al.Name -Value $al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Test-ProfileUpdateDue {
@@ -1371,20 +1382,33 @@ function Test-ProfileUpdateDue {
 }
 
 function Test-ProfileIsSymlink {
-    $profileItem = Get-Item -LiteralPath $PROFILE.CurrentUserCurrentHost -Force -ErrorAction SilentlyContinue
-    return ($profileItem -and $profileItem.LinkType -eq 'SymbolicLink') -or [bool]$script:IsRepoLinkedProfile
+    $profilePath = $PROFILE.CurrentUserCurrentHost
+    $profileItem = Get-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
+    if ($profileItem -and $profileItem.LinkType -eq 'SymbolicLink') {
+        return $true
+    }
+    if ($global:IsRepoLinkedProfile -or $script:IsRepoLinkedProfile) {
+        return $true
+    }
+    if ($profileItem -and (Select-String -LiteralPath $profilePath -Pattern 'IsRepoLinkedProfile' -Quiet -ErrorAction SilentlyContinue)) {
+        return $true
+    }
+    return $false
 }
 
 function Update-Profile {
     [CmdletBinding(SupportsShouldProcess)]
-    [OutputType([bool])]
-    param([switch]$Force)
+    param(
+        [switch]$Force,
+        [switch]$PassThru
+    )
 
     if ((Test-ProfileIsSymlink) -and -not $Force) {
         if ($isInteractiveShell) {
             Write-Host 'Profile is linked to local git repository; skipping remote overwrite.' -ForegroundColor Cyan
         }
-        return $true
+        if ($PassThru) { return $true }
+        return
     }
 
     $url = "$repo_root/powershell-profile/main/Microsoft.PowerShell_profile.ps1"
@@ -1402,7 +1426,8 @@ function Update-Profile {
             if ($isInteractiveShell) {
                 Write-Host 'Profile is up to date.' -ForegroundColor Green
             }
-            return $true
+            if ($PassThru) { return $true }
+            return
         }
 
         if ($PSCmdlet.ShouldProcess($target, 'Update PowerShell profile')) {
@@ -1416,11 +1441,11 @@ function Update-Profile {
             Write-Host 'Profile has been updated. Restart your shell to use the new version.' -ForegroundColor Magenta
         }
 
-        return $true
+        if ($PassThru) { return $true }
     }
     catch {
         Write-Warning "Unable to check for profile updates: $_"
-        return $false
+        if ($PassThru) { return $false }
     }
     finally {
         Remove-Item -LiteralPath $tempFile -ErrorAction SilentlyContinue
@@ -1440,7 +1465,7 @@ function Invoke-ScheduledProfileUpdate {
         Unregister-Event -ErrorAction SilentlyContinue
     Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -MessageData $timeFilePath -Action {
         $stampPath = $Event.MessageData
-        if (Update-Profile) {
+        if (Update-Profile -PassThru) {
             $timeDir = Split-Path -Path $stampPath -Parent
             if (-not (Test-Path -LiteralPath $timeDir -PathType Container)) {
                 New-Item -Path $timeDir -ItemType Directory -Force | Out-Null

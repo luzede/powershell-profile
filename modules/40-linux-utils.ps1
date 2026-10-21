@@ -98,7 +98,7 @@ function admin {
         Start-Process $shell -Verb RunAs -WorkingDirectory $cwd -ArgumentList $shellArgs
     }
 }
-Set-Alias -Name su -Value admin -Force
+Set-Alias -Name su -Value admin -Scope Global -Force
 
 function uptime {
     $boot = if (Get-Command Get-Uptime -ErrorAction SilentlyContinue) {
