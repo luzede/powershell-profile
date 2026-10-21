@@ -1,4 +1,15 @@
-
 *.zip
 *.ttf
-oldprofile.ps1
+
+# Secrets and environment variables
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+
+# OS and Editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

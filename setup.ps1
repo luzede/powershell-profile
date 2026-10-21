@@ -1,3 +1,8 @@
+[CmdletBinding()]
+param(
+    [string]$ExpectedProfileHash = $env:POWERSHELL_PROFILE_SHA256
+)
+
 $profileSourceUri = 'https://github.com/luzede/powershell-profile/raw/main/Microsoft.PowerShell_profile.ps1'
 $themeSourceUri = 'https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/cobalt2.omp.json'
 
@@ -39,6 +44,9 @@ function Save-UriToFile {
 }
 
 function Get-ProfileDir {
+    if ($PROFILE.CurrentUserCurrentHost) {
+        return Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent
+    }
     switch ($PSVersionTable.PSEdition) {
         'Core' { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell'; break }
         'Desktop' { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell'; break }
@@ -75,31 +83,38 @@ function Save-ProfileBackup {
 
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backupPath = Join-Path (Split-Path -Path $ProfilePath -Parent) "oldprofile-$timestamp.ps1"
-    Copy-Item -Path $ProfilePath -Destination $backupPath -Force
+    Copy-Item -Path $ProfilePath -Destination $backupPath -Force -ErrorAction Stop
     return $backupPath
 }
 
 function Install-Profile {
     param(
         [Parameter(Mandatory)][string]$SourceUri,
-        [Parameter(Mandatory)][string]$ProfilePath
+        [Parameter(Mandatory)][string]$ProfilePath,
+        [string]$ExpectedHash
     )
 
     $profileDir = Split-Path -Path $ProfilePath -Parent
     if (-not (Test-Path -Path $profileDir)) {
-        New-Item -Path $profileDir -ItemType Directory -Force | Out-Null
+        New-Item -Path $profileDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
     }
 
-    $tempProfile = Join-Path $env:TEMP 'Microsoft.PowerShell_profile.ps1'
+    $tempProfile = Join-Path $env:TEMP "Microsoft.PowerShell_profile-$PID-$([guid]::NewGuid().ToString('N')).ps1"
     try {
         Save-UriToFile -Uri $SourceUri -OutFile $tempProfile
+        $downloadedHash = (Get-FileHash -LiteralPath $tempProfile -Algorithm SHA256 -ErrorAction Stop).Hash
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedHash) -and $downloadedHash -ne $ExpectedHash.Trim()) {
+            throw "Downloaded profile SHA-256 hash ($downloadedHash) does not match expected hash ($ExpectedHash)."
+        }
+
         $backupPath = Save-ProfileBackup -ProfilePath $ProfilePath
-        Copy-Item -Path $tempProfile -Destination $ProfilePath -Force
+        Copy-Item -Path $tempProfile -Destination $ProfilePath -Force -ErrorAction Stop
 
         Write-Host "PowerShell profile installed to [$ProfilePath]."
         if ($backupPath) {
             Write-Host "Previous profile backed up to [$backupPath]."
         }
+        return $downloadedHash
     }
     finally {
         Remove-Item -Path $tempProfile -ErrorAction SilentlyContinue
@@ -138,19 +153,20 @@ function Install-OhMyPoshTheme {
     )
 
     $profileDir = Get-ProfileDir
-    if (-not (Test-Path -Path $profileDir)) {
-        New-Item -Path $profileDir -ItemType Directory -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $profileDir -PathType Container)) {
+        New-Item -Path $profileDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
     }
 
     # Create the Themes directory if it doesn't exist
     $themesDir = Join-Path $profileDir 'Themes'
-    if (-not (Test-Path $themesPath)) {
-        New-Item -Path $themesPath -ItemType Directory -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $themesDir -PathType Container)) {
+        New-Item -Path $themesDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
     }
     $themePath = Join-Path $themesDir "$ThemeName.omp.json"
-    [Environment]::SetEnvironmentVariable("POSH_CONFIG", $themePath, "User")
     try {
         Save-UriToFile -Uri $ThemeUri -OutFile $themePath
+        $env:POSH_CONFIG = $themePath
+        [Environment]::SetEnvironmentVariable('POSH_CONFIG', $themePath, 'User')
         Write-Host "Oh My Posh theme installed to [$themePath]."
         return $themePath
     }
@@ -190,12 +206,27 @@ function Install-NerdFont {
     try {
         Remove-Item -Path $extractPath -Recurse -Force -ErrorAction SilentlyContinue
         Save-UriToFile -Uri $fontZipUrl -OutFile $zipFilePath
-        Expand-Archive -Path $zipFilePath -DestinationPath $extractPath -Force
+        Expand-Archive -Path $zipFilePath -DestinationPath $extractPath -Force -ErrorAction Stop
 
+        $fontsDir = [Environment]::GetFolderPath('Fonts')
         $fontShellFolder = (New-Object -ComObject Shell.Application).Namespace(0x14)
-        Get-ChildItem -Path $extractPath -Recurse -Filter '*.ttf' | ForEach-Object {
-            if (-not (Test-Path "C:\Windows\Fonts\$($_.Name)")) {
-                $fontShellFolder.CopyHere($_.FullName, 0x10)
+        $pendingFonts = [System.Collections.Generic.List[string]]::new()
+        Get-ChildItem -Path $extractPath -Recurse -Filter '*.ttf' -ErrorAction Stop | ForEach-Object {
+            $targetFontPath = Join-Path $fontsDir $_.Name
+            if (-not (Test-Path -LiteralPath $targetFontPath)) {
+                $fontShellFolder.CopyHere($_.FullName, 0x14)
+                $pendingFonts.Add($targetFontPath)
+            }
+        }
+
+        if ($pendingFonts.Count -gt 0) {
+            $deadline = (Get-Date).AddSeconds(30)
+            while ((Get-Date) -lt $deadline) {
+                $remaining = @($pendingFonts | Where-Object { -not (Test-Path -LiteralPath $_) })
+                if ($remaining.Count -eq 0) {
+                    break
+                }
+                Start-Sleep -Milliseconds 200
             }
         }
 
@@ -214,7 +245,7 @@ function Install-NerdFont {
 
 function Install-TerminalIconsModule {
     try {
-        Install-Module -Name Terminal-Icons -Repository PSGallery -Scope CurrentUser -Force -SkipPublisherCheck
+        Install-Module -Name Terminal-Icons -Repository PSGallery -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
         Write-Host 'Terminal-Icons module installed.'
         return $true
     }
@@ -241,11 +272,38 @@ catch {
 }
 
 $profilePath = $PROFILE.CurrentUserCurrentHost
-Install-Profile -SourceUri $profileSourceUri -ProfilePath $profilePath
+if ([string]::IsNullOrWhiteSpace($ExpectedProfileHash) -and $PSScriptRoot) {
+    $localBundledProfile = Join-Path $PSScriptRoot 'Microsoft.PowerShell_profile.ps1'
+    if (Test-Path -LiteralPath $localBundledProfile -PathType Leaf) {
+        $ExpectedProfileHash = (Get-FileHash -LiteralPath $localBundledProfile -Algorithm SHA256 -ErrorAction Stop).Hash
+    }
+}
+$installedProfileHash = Install-Profile -SourceUri $profileSourceUri -ProfilePath $profilePath -ExpectedHash $ExpectedProfileHash
 Install-WinGetPackage -Id 'JanDeDobbeleer.OhMyPosh' -Name 'Oh My Posh' | Out-Null
 Install-WinGetPackage -Id 'ajeetdsouza.zoxide' -Name 'zoxide' | Out-Null
 Install-OhMyPoshTheme | Out-Null
 Install-NerdFont | Out-Null
 Install-TerminalIconsModule | Out-Null
+
+if ($installedProfileHash -and (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
+    try {
+        $currentProfileHash = (Get-FileHash -LiteralPath $profilePath -Algorithm SHA256 -ErrorAction Stop).Hash
+        if ($currentProfileHash -ne $installedProfileHash) {
+            throw "Profile integrity check failed before execution: expected $installedProfileHash, got $currentProfileHash."
+        }
+
+        $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+        $env:PATH = (@($machinePath, $userPath) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ';'
+
+        . $profilePath
+        Initialize-XdgEnvironment -Force
+        Update-InitCache -Tool 'All'
+        Write-Host 'Initialized persistent XDG environment variables and startup script cache.'
+    }
+    catch {
+        Write-Warning "Profile post-setup initialization encountered an issue: $_"
+    }
+}
 
 Write-Host 'Setup completed. Restart PowerShell to load the profile.'
