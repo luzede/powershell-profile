@@ -184,11 +184,6 @@ if ($isInteractiveShell) {
     }
 }
 
-function prompt {
-    $marker = if ($isAdmin) { '#' } else { '$' }
-    "[$(Get-Location)] $marker "
-}
-
 function Get-Theme {
     param(
         [Parameter(Mandatory = $true)]
@@ -235,9 +230,9 @@ function Set-Theme {
 
     Set-PersistentEnv 'POSH_CONFIG' $themePath
     Update-InitCache -Tool 'oh-my-posh'
-    $ompCache = Join-Path (Get-ProfileCacheDir) 'omp-init.ps1'
-    if (Test-Path -LiteralPath $ompCache -PathType Leaf) {
-        . $ompCache
+    . Initialize-PromptTool
+    if (Get-Command -Name 'Initialize-CustomProfile' -ErrorAction SilentlyContinue) {
+        . Initialize-CustomProfile
     }
 }
 
@@ -346,7 +341,7 @@ function Use-CachedInit {
             }
         }
         foreach ($__fn in (Get-ChildItem -Path Function:\)) {
-            if ($__fn.Name -ne 'Use-CachedInit') {
+            if ($__fn.Name -notin @('Use-CachedInit', 'prompt') -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File -eq $cacheFile) {
                 Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
             }
         }
@@ -448,7 +443,13 @@ function Initialize-PromptTool {
 
     $cacheDir = Get-ProfileCacheDir
 
+    # Reset prompt hook sentinels so reloading the profile cleanly re-chains oh-my-posh -> zoxide -> custom hooks
+    Remove-Item -Path Function:\prompt -ErrorAction SilentlyContinue
+    $global:__zoxide_hooked = $null
+    $global:__mise_pwsh_previous_prompt_function = $null
+
     # 1. Oh My Posh (Cached)
+    $ompLoaded = $false
     $ompCache = Join-Path $cacheDir 'omp-init.ps1'
     $ompThemeMeta = Join-Path $cacheDir 'omp-theme.txt'
     $theme = Resolve-OhMyPoshTheme
@@ -464,10 +465,18 @@ function Initialize-PromptTool {
 
         if (Test-Path -LiteralPath $ompCache -PathType Leaf) {
             . $ompCache
+            $ompLoaded = $true
         }
     }
     elseif (Test-Command oh-my-posh) {
         Write-Warning 'Oh My Posh theme not found. Run setup.ps1 to install cobalt2.omp.json.'
+    }
+
+    if (-not $ompLoaded) {
+        function global:prompt {
+            $marker = if ($isAdmin) { '#' } else { '$' }
+            "[$(Get-Location)] $marker "
+        }
     }
 
     # 2. zoxide (Cached)
@@ -1227,16 +1236,26 @@ function pst { Get-Clipboard }
 # ======================================================================
 
 function Invoke-Profile {
+    $__existingVars = @{}
+    foreach ($__v in (Get-Variable -Scope Local)) {
+        $__existingVars[$__v.Name] = $true
+    }
+
     . $PROFILE.CurrentUserCurrentHost
 
-    foreach ($fn in (Get-ChildItem -Path Function:\)) {
-        if ($fn.Name -ne 'Invoke-Profile') {
-            Set-Item -Path "Function:\global:$($fn.Name)" -Value $fn.ScriptBlock -Force
+    foreach ($__v in (Get-Variable -Scope Local)) {
+        if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -ne '__existingVars') {
+            Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
         }
     }
-    foreach ($al in (Get-Alias)) {
-        if ($al.Options -notmatch 'ReadOnly|Constant') {
-            Set-Alias -Name $al.Name -Value $al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
+    foreach ($__fn in (Get-ChildItem -Path Function:\)) {
+        if ($__fn.Name -notin @('Invoke-Profile', 'prompt') -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File) {
+            Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
+        }
+    }
+    foreach ($__al in (Get-Alias)) {
+        if ($__al.Options -notmatch 'ReadOnly|Constant') {
+            Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
         }
     }
 }

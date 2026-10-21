@@ -3,16 +3,26 @@
 # ======================================================================
 
 function Invoke-Profile {
+    $__existingVars = @{}
+    foreach ($__v in (Get-Variable -Scope Local)) {
+        $__existingVars[$__v.Name] = $true
+    }
+
     . $PROFILE.CurrentUserCurrentHost
 
-    foreach ($fn in (Get-ChildItem -Path Function:\)) {
-        if ($fn.Name -ne 'Invoke-Profile') {
-            Set-Item -Path "Function:\global:$($fn.Name)" -Value $fn.ScriptBlock -Force
+    foreach ($__v in (Get-Variable -Scope Local)) {
+        if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -ne '__existingVars') {
+            Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
         }
     }
-    foreach ($al in (Get-Alias)) {
-        if ($al.Options -notmatch 'ReadOnly|Constant') {
-            Set-Alias -Name $al.Name -Value $al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
+    foreach ($__fn in (Get-ChildItem -Path Function:\)) {
+        if ($__fn.Name -notin @('Invoke-Profile', 'prompt') -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File) {
+            Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
+        }
+    }
+    foreach ($__al in (Get-Alias)) {
+        if ($__al.Options -notmatch 'ReadOnly|Constant') {
+            Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
         }
     }
 }
