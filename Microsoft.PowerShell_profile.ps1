@@ -14,7 +14,7 @@ function Enable-Tls12 {
     }
 }
 
-function Test-InteractiveShell {
+function IsInteractiveShell {
     try {
         return $Host.Name -eq 'ConsoleHost' -and
         -not [Console]::IsInputRedirected -and
@@ -98,8 +98,6 @@ function Get-ProfileCustomDir {
     Join-Path (Get-ProfileDir) 'Custom'
 }
 
-$script:isInteractiveShell = Test-InteractiveShell
-
 # ======================================================================
 # Module 10: XDG Base Directory Provisioning
 # ======================================================================
@@ -170,7 +168,7 @@ if (-not $global:RegisteredCachedInits) {
     $global:RegisteredCachedInits = @{}
 }
 
-if ($isInteractiveShell) {
+if (IsInteractiveShell) {
     try {
         $adminSuffix = if ($isAdmin) { ' [ADMIN]' } else { '' }
         $Host.UI.RawUI.WindowTitle = "PowerShell $($PSVersionTable.PSVersion)$adminSuffix"
@@ -323,7 +321,7 @@ function Use-CachedInit {
         ($transformedLines -join "`n") | Set-Content -LiteralPath $cacheFile -Encoding UTF8 -ErrorAction Stop
     }
 
-    if (-not $NoLoad -and $isInteractiveShell -and (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
+    if (-not $NoLoad -and (IsInteractiveShell) -and (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
         $__existingVars = @{}
         foreach ($__v in (Get-Variable -Scope Local)) {
             $__existingVars[$__v.Name] = $true
@@ -433,7 +431,7 @@ function Clear-InitCache {
 }
 
 function Initialize-PromptTool {
-    if (-not $isInteractiveShell) {
+    if (-not (IsInteractiveShell)) {
         return
     }
 
@@ -518,7 +516,7 @@ function Set-PredictionSource {
 }
 
 function Initialize-PSReadLine {
-    if (-not $isInteractiveShell) {
+    if (-not (IsInteractiveShell)) {
         return
     }
 
@@ -564,7 +562,7 @@ function Initialize-PSReadLine {
 }
 
 function Register-CustomCompletion {
-    if (-not $isInteractiveShell) {
+    if (-not (IsInteractiveShell)) {
         return
     }
 
@@ -598,7 +596,7 @@ function Register-CustomCompletion {
 }
 
 function Initialize-OptionalModule {
-    if (-not $isInteractiveShell) {
+    if (-not (IsInteractiveShell)) {
         return
     }
 
@@ -1284,7 +1282,7 @@ function Update-Profile {
         $newHash = (Get-FileHash -LiteralPath $tempFile -ErrorAction Stop).Hash
 
         if (-not $Force -and $targetExists -and $oldHash -eq $newHash) {
-            if ($isInteractiveShell) {
+            if (IsInteractiveShell) {
                 Write-Host 'Profile is up to date.' -ForegroundColor Green
             }
             if ($PassThru) { return $true }
@@ -1314,7 +1312,7 @@ function Update-Profile {
 }
 
 function Invoke-ScheduledProfileUpdate {
-    if (-not $isInteractiveShell -or
+    if (-not (IsInteractiveShell) -or
         -not (Test-ProfileUpdateDue -Path $timeFilePath -IntervalDays $updateInterval)) {
         return
     }
@@ -1450,6 +1448,6 @@ Register-CustomCompletion
 Initialize-OptionalModule
 Invoke-ScheduledProfileUpdate
 
-if ($isInteractiveShell) {
+if (IsInteractiveShell) {
     Write-Host "Use 'Show-Help' to display help" -ForegroundColor Yellow
 }

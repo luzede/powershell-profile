@@ -7,7 +7,7 @@ if (-not $global:RegisteredCachedInits) {
     $global:RegisteredCachedInits = @{}
 }
 
-if ($isInteractiveShell) {
+if (IsInteractiveShell) {
     try {
         $adminSuffix = if ($isAdmin) { ' [ADMIN]' } else { '' }
         $Host.UI.RawUI.WindowTitle = "PowerShell $($PSVersionTable.PSVersion)$adminSuffix"
@@ -160,7 +160,7 @@ function Use-CachedInit {
         ($transformedLines -join "`n") | Set-Content -LiteralPath $cacheFile -Encoding UTF8 -ErrorAction Stop
     }
 
-    if (-not $NoLoad -and $isInteractiveShell -and (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
+    if (-not $NoLoad -and (IsInteractiveShell) -and (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
         $__existingVars = @{}
         foreach ($__v in (Get-Variable -Scope Local)) {
             $__existingVars[$__v.Name] = $true
@@ -270,7 +270,7 @@ function Clear-InitCache {
 }
 
 function Initialize-PromptTool {
-    if (-not $isInteractiveShell) {
+    if (-not (IsInteractiveShell)) {
         return
     }
 

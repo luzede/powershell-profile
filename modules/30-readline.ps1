@@ -31,7 +31,7 @@ function Set-PredictionSource {
 }
 
 function Initialize-PSReadLine {
-    if (-not $isInteractiveShell) {
+    if (-not (IsInteractiveShell)) {
         return
     }
 
@@ -77,7 +77,7 @@ function Initialize-PSReadLine {
 }
 
 function Register-CustomCompletion {
-    if (-not $isInteractiveShell) {
+    if (-not (IsInteractiveShell)) {
         return
     }
 
@@ -111,7 +111,7 @@ function Register-CustomCompletion {
 }
 
 function Initialize-OptionalModule {
-    if (-not $isInteractiveShell) {
+    if (-not (IsInteractiveShell)) {
         return
     }
 

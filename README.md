@@ -102,7 +102,7 @@ To load heavy PowerShell modules (such as `posh-git` or `PSFzf`) without delayin
 
 ```powershell
 # Documents\PowerShell\Custom\20-modules.ps1
-if ($isInteractiveShell) {
+if (IsInteractiveShell) {
     Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -Action {
         Import-Module posh-git -Global -ErrorAction SilentlyContinue
     } | Out-Null

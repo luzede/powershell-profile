@@ -55,7 +55,7 @@ function Update-Profile {
         $newHash = (Get-FileHash -LiteralPath $tempFile -ErrorAction Stop).Hash
 
         if (-not $Force -and $targetExists -and $oldHash -eq $newHash) {
-            if ($isInteractiveShell) {
+            if (IsInteractiveShell) {
                 Write-Host 'Profile is up to date.' -ForegroundColor Green
             }
             if ($PassThru) { return $true }
@@ -85,7 +85,7 @@ function Update-Profile {
 }
 
 function Invoke-ScheduledProfileUpdate {
-    if (-not $isInteractiveShell -or
+    if (-not (IsInteractiveShell) -or
         -not (Test-ProfileUpdateDue -Path $timeFilePath -IntervalDays $updateInterval)) {
         return
     }
@@ -221,7 +221,7 @@ Register-CustomCompletion
 Initialize-OptionalModule
 Invoke-ScheduledProfileUpdate
 
-if ($isInteractiveShell) {
+if (IsInteractiveShell) {
     Write-Host "Use 'Show-Help' to display help" -ForegroundColor Yellow
 }
 

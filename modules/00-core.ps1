@@ -11,7 +11,7 @@ function Enable-Tls12 {
     }
 }
 
-function Test-InteractiveShell {
+function IsInteractiveShell {
     try {
         return $Host.Name -eq 'ConsoleHost' -and
         -not [Console]::IsInputRedirected -and
@@ -94,6 +94,4 @@ function Get-ProfileCacheDir {
 function Get-ProfileCustomDir {
     Join-Path (Get-ProfileDir) 'Custom'
 }
-
-$script:isInteractiveShell = Test-InteractiveShell
 
