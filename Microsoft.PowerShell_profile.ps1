@@ -595,35 +595,18 @@ function Register-CustomCompletion {
         return
     }
 
-    $completionMap = @{
-        git  = @('status', 'add', 'commit', 'push', 'pull', 'clone', 'checkout')
-        npm  = @('install', 'start', 'run', 'test', 'build')
-        deno = @('run', 'compile', 'bundle', 'test', 'lint', 'fmt', 'cache', 'info', 'doc', 'upgrade')
-    }
+    $gitCommands = @('status', 'add', 'commit', 'push', 'pull', 'clone', 'checkout')
 
     try {
-        Register-ArgumentCompleter -Native -CommandName git, npm, deno -ScriptBlock {
+        Register-ArgumentCompleter -Native -CommandName git -ScriptBlock {
             param($wordToComplete, $commandAst, $cursorPosition)
+            $null = $commandAst
             $null = $cursorPosition
-            $completionWord = $wordToComplete
-            $map = $completionMap
-            $command = [System.IO.Path]::GetFileNameWithoutExtension($commandAst.CommandElements[0].Value)
-            if ($map.ContainsKey($command)) {
-                $pattern = [System.Management.Automation.WildcardPattern]::Escape($completionWord) + '*'
-                $map[$command] |
-                    Where-Object { $_ -like $pattern } |
-                    ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
-            }
+            $pattern = [System.Management.Automation.WildcardPattern]::Escape($wordToComplete) + '*'
+            $gitCommands |
+                Where-Object { $_ -like $pattern } |
+                ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
         }.GetNewClosure()
-
-        Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock {
-            param($wordToComplete, $commandAst, $cursorPosition)
-            $null = $wordToComplete
-            if (Get-Command -Name dotnet -ErrorAction SilentlyContinue) {
-                dotnet complete --position $cursorPosition $commandAst.ToString() |
-                    ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
-            }
-        }
     }
     catch {
         Write-Verbose "Unable to register argument completers: $_"
