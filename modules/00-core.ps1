@@ -1,41 +1,37 @@
 # ======================================================================
-# Module 00: Core Helpers & Primitives
+# Module 00: Core Helpers & Primitives (PowerShell 7+)
 # ======================================================================
 
 function Enable-Tls12 {
-    try {
-        $protocol = [Net.ServicePointManager]::SecurityProtocol
-        $isSystemDefault = try { [int]$protocol -eq 0 -or $protocol -eq [Net.SecurityProtocolType]::SystemDefault } catch { [int]$protocol -eq 0 }
-        if (-not $isSystemDefault -and -not ($protocol -band [Net.SecurityProtocolType]::Tls12)) {
-            [Net.ServicePointManager]::SecurityProtocol = $protocol -bor [Net.SecurityProtocolType]::Tls12
-        }
-    }
-    catch {
-        Write-Verbose "Unable to enable TLS 1.2 explicitly: $_"
-    }
+    <# PowerShell 7 uses OS-negotiated TLS 1.2/1.3 natively in .NET Core #>
 }
+
+$script:ProfileDir = if ($PROFILE.CurrentUserCurrentHost) {
+    Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent
+} else {
+    Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell'
+}
+
+$script:CacheDir = if (-not [string]::IsNullOrWhiteSpace($env:XDG_CACHE_HOME)) {
+    Join-Path $env:XDG_CACHE_HOME 'powershell'
+} else {
+    Join-Path $HOME '.cache\powershell'
+}
+
+$script:CustomDir = Join-Path $script:ProfileDir 'Custom'
+
+function Get-ProfileDir { $script:ProfileDir }
+function Get-ProfileCacheDir { $script:CacheDir }
+function Get-ProfileCustomDir { $script:CustomDir }
 
 function IsInteractiveShell {
     try {
-        return $Host.Name -eq 'ConsoleHost' -and
+        return ($Host.Name -in @('ConsoleHost', 'Visual Studio Code Host')) -and
         -not [Console]::IsInputRedirected -and
         -not [Console]::IsOutputRedirected
     }
     catch {
         return $false
-    }
-}
-
-function Get-ProfileDir {
-    if ($PROFILE.CurrentUserCurrentHost) {
-        return Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent
-    }
-    switch ($PSVersionTable.PSEdition) {
-        'Core' { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell'; break }
-        'Desktop' { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell'; break }
-        default {
-            throw "Unsupported PowerShell edition: $($PSVersionTable.PSEdition)"
-        }
     }
 }
 
@@ -57,20 +53,29 @@ function Save-UriToFile {
 
     $resolvedOutFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)
     $outDir = Split-Path -Path $resolvedOutFile -Parent
-    if ($outDir -and -not (Test-Path -LiteralPath $outDir -PathType Container)) {
-        New-Item -ItemType Directory -Path $outDir -Force -ErrorAction Stop | Out-Null
+    if ($outDir -and -not [System.IO.Directory]::Exists($outDir)) {
+        [System.IO.Directory]::CreateDirectory($outDir) | Out-Null
     }
 
-    Enable-Tls12
     $tempFile = Join-Path $env:TEMP ("download-$PID-$([guid]::NewGuid().ToString('N')).tmp")
-    $client = New-Object System.Net.WebClient
+    $httpClient = [System.Net.Http.HttpClient]::new()
     try {
-        $client.DownloadFile($parsedUri, $tempFile)
-        Move-Item -LiteralPath $tempFile -Destination $resolvedOutFile -Force -ErrorAction Stop
+        $response = $httpClient.GetAsync($parsedUri).GetAwaiter().GetResult()
+        $response.EnsureSuccessStatusCode() | Out-Null
+        $fileStream = [System.IO.FileStream]::new($tempFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $response.Content.CopyToAsync($fileStream).GetAwaiter().GetResult()
+        }
+        finally {
+            $fileStream.Dispose()
+        }
+        [System.IO.File]::Move($tempFile, $resolvedOutFile, $true)
     }
     finally {
-        $client.Dispose()
-        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        $httpClient.Dispose()
+        if ([System.IO.File]::Exists($tempFile)) {
+            [System.IO.File]::Delete($tempFile)
+        }
     }
 }
 
@@ -82,14 +87,12 @@ function Get-UriContent {
         throw "Only HTTPS URIs are allowed: '$Uri'"
     }
 
-    Enable-Tls12
-    $client = New-Object System.Net.WebClient
-    $client.Encoding = [System.Text.Encoding]::UTF8
+    $httpClient = [System.Net.Http.HttpClient]::new()
     try {
-        $client.DownloadString($parsedUri)
+        $httpClient.GetStringAsync($parsedUri).GetAwaiter().GetResult()
     }
     finally {
-        $client.Dispose()
+        $httpClient.Dispose()
     }
 }
 
@@ -111,18 +114,3 @@ function Set-PersistentEnv {
         [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
     }
 }
-
-function Get-ProfileCacheDir {
-    $cacheHome = if (-not [string]::IsNullOrWhiteSpace($env:XDG_CACHE_HOME)) {
-        $env:XDG_CACHE_HOME
-    }
-    else {
-        Join-Path $HOME '.cache'
-    }
-    Join-Path $cacheHome 'powershell'
-}
-
-function Get-ProfileCustomDir {
-    Join-Path (Get-ProfileDir) 'Custom'
-}
-

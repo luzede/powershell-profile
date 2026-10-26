@@ -6,16 +6,11 @@ param(
 $profileSourceUri = 'https://github.com/luzede/powershell-profile/raw/main/Microsoft.PowerShell_profile.ps1'
 $themeSourceUri = 'https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/cobalt2.omp.json'
 
-function Enable-Tls12 {
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    }
-    catch {
-        Write-Verbose "Unable to enable TLS 1.2 explicitly: $_"
-    }
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    Write-Warning "Pretty PowerShell profile requires PowerShell 7 or higher. Current version: $($PSVersionTable.PSVersion). Please run setup.ps1 inside PowerShell 7 (pwsh)."
+    $global:LASTEXITCODE = 1
+    return
 }
-
-Enable-Tls12
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -34,12 +29,20 @@ function Save-UriToFile {
         [Parameter(Mandatory)][string]$OutFile
     )
 
-    $client = New-Object System.Net.WebClient
+    $httpClient = [System.Net.Http.HttpClient]::new()
     try {
-        $client.DownloadFile($Uri, $OutFile)
+        $response = $httpClient.GetAsync($Uri).GetAwaiter().GetResult()
+        $response.EnsureSuccessStatusCode() | Out-Null
+        $fileStream = [System.IO.FileStream]::new($OutFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $response.Content.CopyToAsync($fileStream).GetAwaiter().GetResult()
+        }
+        finally {
+            $fileStream.Dispose()
+        }
     }
     finally {
-        $client.Dispose()
+        $httpClient.Dispose()
     }
 }
 
@@ -47,30 +50,22 @@ function Get-ProfileDir {
     if ($PROFILE.CurrentUserCurrentHost) {
         return Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent
     }
-    switch ($PSVersionTable.PSEdition) {
-        'Core' { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell'; break }
-        'Desktop' { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell'; break }
-        default { throw "Unsupported PowerShell edition: $($PSVersionTable.PSEdition)" }
-    }
+    return Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell'
 }
 
 function Test-InternetConnection {
-    $response = $null
+    $httpClient = [System.Net.Http.HttpClient]::new()
+    $httpClient.Timeout = [TimeSpan]::FromSeconds(5)
     try {
-        $request = [System.Net.WebRequest]::Create('https://github.com')
-        $request.Method = 'HEAD'
-        $request.Timeout = 10000
-        $response = $request.GetResponse()
-        return $true
+        $response = $httpClient.GetAsync('https://github.com').GetAwaiter().GetResult()
+        return $response.IsSuccessStatusCode
     }
     catch {
         Write-Warning 'Internet connection is required but GitHub is not reachable.'
         return $false
     }
     finally {
-        if ($response) {
-            $response.Close()
-        }
+        $httpClient.Dispose()
     }
 }
 

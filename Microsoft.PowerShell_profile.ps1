@@ -2,43 +2,39 @@
 # Do not edit this bundled file directly; edit files in modules/ and commit (pre-commit hook bundles automatically)
 
 # ======================================================================
-# Module 00: Core Helpers & Primitives
+# Module 00: Core Helpers & Primitives (PowerShell 7+)
 # ======================================================================
 
 function Enable-Tls12 {
-    try {
-        $protocol = [Net.ServicePointManager]::SecurityProtocol
-        $isSystemDefault = try { [int]$protocol -eq 0 -or $protocol -eq [Net.SecurityProtocolType]::SystemDefault } catch { [int]$protocol -eq 0 }
-        if (-not $isSystemDefault -and -not ($protocol -band [Net.SecurityProtocolType]::Tls12)) {
-            [Net.ServicePointManager]::SecurityProtocol = $protocol -bor [Net.SecurityProtocolType]::Tls12
-        }
-    }
-    catch {
-        Write-Verbose "Unable to enable TLS 1.2 explicitly: $_"
-    }
+    <# PowerShell 7 uses OS-negotiated TLS 1.2/1.3 natively in .NET Core #>
 }
+
+$script:ProfileDir = if ($PROFILE.CurrentUserCurrentHost) {
+    Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent
+} else {
+    Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell'
+}
+
+$script:CacheDir = if (-not [string]::IsNullOrWhiteSpace($env:XDG_CACHE_HOME)) {
+    Join-Path $env:XDG_CACHE_HOME 'powershell'
+} else {
+    Join-Path $HOME '.cache\powershell'
+}
+
+$script:CustomDir = Join-Path $script:ProfileDir 'Custom'
+
+function Get-ProfileDir { $script:ProfileDir }
+function Get-ProfileCacheDir { $script:CacheDir }
+function Get-ProfileCustomDir { $script:CustomDir }
 
 function IsInteractiveShell {
     try {
-        return $Host.Name -eq 'ConsoleHost' -and
+        return ($Host.Name -in @('ConsoleHost', 'Visual Studio Code Host')) -and
         -not [Console]::IsInputRedirected -and
         -not [Console]::IsOutputRedirected
     }
     catch {
         return $false
-    }
-}
-
-function Get-ProfileDir {
-    if ($PROFILE.CurrentUserCurrentHost) {
-        return Split-Path -Path $PROFILE.CurrentUserCurrentHost -Parent
-    }
-    switch ($PSVersionTable.PSEdition) {
-        'Core' { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell'; break }
-        'Desktop' { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell'; break }
-        default {
-            throw "Unsupported PowerShell edition: $($PSVersionTable.PSEdition)"
-        }
     }
 }
 
@@ -60,20 +56,29 @@ function Save-UriToFile {
 
     $resolvedOutFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)
     $outDir = Split-Path -Path $resolvedOutFile -Parent
-    if ($outDir -and -not (Test-Path -LiteralPath $outDir -PathType Container)) {
-        New-Item -ItemType Directory -Path $outDir -Force -ErrorAction Stop | Out-Null
+    if ($outDir -and -not [System.IO.Directory]::Exists($outDir)) {
+        [System.IO.Directory]::CreateDirectory($outDir) | Out-Null
     }
 
-    Enable-Tls12
     $tempFile = Join-Path $env:TEMP ("download-$PID-$([guid]::NewGuid().ToString('N')).tmp")
-    $client = New-Object System.Net.WebClient
+    $httpClient = [System.Net.Http.HttpClient]::new()
     try {
-        $client.DownloadFile($parsedUri, $tempFile)
-        Move-Item -LiteralPath $tempFile -Destination $resolvedOutFile -Force -ErrorAction Stop
+        $response = $httpClient.GetAsync($parsedUri).GetAwaiter().GetResult()
+        $response.EnsureSuccessStatusCode() | Out-Null
+        $fileStream = [System.IO.FileStream]::new($tempFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $response.Content.CopyToAsync($fileStream).GetAwaiter().GetResult()
+        }
+        finally {
+            $fileStream.Dispose()
+        }
+        [System.IO.File]::Move($tempFile, $resolvedOutFile, $true)
     }
     finally {
-        $client.Dispose()
-        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        $httpClient.Dispose()
+        if ([System.IO.File]::Exists($tempFile)) {
+            [System.IO.File]::Delete($tempFile)
+        }
     }
 }
 
@@ -85,14 +90,12 @@ function Get-UriContent {
         throw "Only HTTPS URIs are allowed: '$Uri'"
     }
 
-    Enable-Tls12
-    $client = New-Object System.Net.WebClient
-    $client.Encoding = [System.Text.Encoding]::UTF8
+    $httpClient = [System.Net.Http.HttpClient]::new()
     try {
-        $client.DownloadString($parsedUri)
+        $httpClient.GetStringAsync($parsedUri).GetAwaiter().GetResult()
     }
     finally {
-        $client.Dispose()
+        $httpClient.Dispose()
     }
 }
 
@@ -115,20 +118,6 @@ function Set-PersistentEnv {
     }
 }
 
-function Get-ProfileCacheDir {
-    $cacheHome = if (-not [string]::IsNullOrWhiteSpace($env:XDG_CACHE_HOME)) {
-        $env:XDG_CACHE_HOME
-    }
-    else {
-        Join-Path $HOME '.cache'
-    }
-    Join-Path $cacheHome 'powershell'
-}
-
-function Get-ProfileCustomDir {
-    Join-Path (Get-ProfileDir) 'Custom'
-}
-
 # ======================================================================
 # Module 10: XDG Base Directory Provisioning
 # ======================================================================
@@ -140,7 +129,7 @@ if (-not $env:XDG_DATA_HOME)   { $env:XDG_DATA_HOME   = "$HOME\.local\share" }
 if (-not $env:XDG_CACHE_HOME)  { $env:XDG_CACHE_HOME  = "$HOME\.cache" }
 if (-not $env:XDG_STATE_HOME)  { $env:XDG_STATE_HOME  = "$HOME\.local\state" }
 
-if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
+if ($env:PATH.IndexOf($env:XDG_BIN_HOME, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
     $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
 }
 
@@ -157,7 +146,7 @@ function Initialize-XdgEnvironment {
     $customDir = Get-ProfileCustomDir
     $profileDir = Get-ProfileDir
     $sentinelFile = Join-Path $profileDir '.xdg-initialized'
-    if (-not $Force -and (Test-Path -LiteralPath $sentinelFile -PathType Leaf)) {
+    if (-not $Force -and [System.IO.File]::Exists($sentinelFile)) {
         return
     }
 
@@ -182,13 +171,13 @@ function Initialize-XdgEnvironment {
             Write-Warning "Skipping XDG directory with non-absolute path: '$dir'"
             continue
         }
-        if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
-            New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+        if (-not [System.IO.Directory]::Exists($dir)) {
+            [System.IO.Directory]::CreateDirectory($dir) | Out-Null
         }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME) -and [System.IO.Path]::IsPathRooted($env:XDG_BIN_HOME)) {
-        if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
+        if ($env:PATH.IndexOf($env:XDG_BIN_HOME, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
             $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
         }
 
@@ -210,28 +199,31 @@ function Initialize-XdgEnvironment {
         }
     }
 
-    Get-Date -Format 'o' | Set-Content -LiteralPath $sentinelFile -Encoding UTF8 -ErrorAction Stop
+    [System.IO.File]::WriteAllText($sentinelFile, (Get-Date -Format 'o'))
 }
 
-# Run XDG provisioning safely (it checks its own sentinel unless -Force is given)
-try {
-    Initialize-XdgEnvironment -ErrorAction Stop
-}
-catch {
-    Write-Warning "XDG environment provisioning failed: $_"
+# Run XDG provisioning safely (fast-path sentinel check)
+$script:xdgSentinel = Join-Path (Get-ProfileDir) '.xdg-initialized'
+if (-not [System.IO.File]::Exists($script:xdgSentinel)) {
+    try {
+        Initialize-XdgEnvironment -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "XDG environment provisioning failed: $_"
+    }
 }
 
 # ======================================================================
-# Module 20: Prompt, Themes & Cached Tool Initialization
+# Module 20: Prompt, Themes & Cached Tool Initialization (PowerShell 7+)
 # ======================================================================
 
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $global:RegisteredCachedInits) {
     $global:RegisteredCachedInits = @{}
 }
 
 if (IsInteractiveShell) {
     try {
+        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
         $adminSuffix = if ($isAdmin) { ' [ADMIN]' } else { '' }
         $Host.UI.RawUI.WindowTitle = "PowerShell $($PSVersionTable.PSVersion)$adminSuffix"
     }
@@ -250,8 +242,8 @@ function Get-Theme {
     $themeDir = Join-Path (Get-ProfileDir) 'Themes'
     $themePath = Join-Path $themeDir "$theme.omp.json"
 
-    if (-not (Test-Path -LiteralPath $themeDir -PathType Container)) {
-        New-Item -Path $themeDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+    if (-not [System.IO.Directory]::Exists($themeDir)) {
+        [System.IO.Directory]::CreateDirectory($themeDir) | Out-Null
     }
 
     try {
@@ -277,7 +269,7 @@ function Set-Theme {
     $themesDir = Join-Path (Get-ProfileDir) 'Themes'
     $themePath = Join-Path $themesDir "$theme.omp.json"
 
-    if (-not (Test-Path -LiteralPath $themePath -PathType Leaf)) {
+    if (-not [System.IO.File]::Exists($themePath)) {
         $downloaded = Get-Theme -ThemeName $theme
         if (-not $downloaded) {
             return
@@ -293,19 +285,17 @@ function Set-Theme {
 }
 
 function Resolve-OhMyPoshTheme {
-    $poshConfig = if ($env:POSH_CONFIG) { $env:POSH_CONFIG } else { [Environment]::GetEnvironmentVariable('POSH_CONFIG', 'User') }
-
-    $candidates = @(
-        $poshConfig,
-        (Join-Path (Join-Path (Get-ProfileDir) 'Themes') 'cobalt2.omp.json')
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            return $candidate
-        }
+    if ($env:POSH_CONFIG -and [System.IO.File]::Exists($env:POSH_CONFIG)) {
+        return $env:POSH_CONFIG
     }
-
+    $userPoshConfig = [Environment]::GetEnvironmentVariable('POSH_CONFIG', 'User')
+    if ($userPoshConfig -and [System.IO.File]::Exists($userPoshConfig)) {
+        return $userPoshConfig
+    }
+    $defaultTheme = Join-Path (Get-ProfileDir) 'Themes\cobalt2.omp.json'
+    if ([System.IO.File]::Exists($defaultTheme)) {
+        return $defaultTheme
+    }
     return $null
 }
 
@@ -339,16 +329,18 @@ function Use-CachedInit {
     $cacheDir = Get-ProfileCacheDir
     $cacheFile = Join-Path $cacheDir "$key-init.ps1"
 
-    if ($Force -or -not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
-        if (-not (Test-Path -LiteralPath $cacheDir -PathType Container)) {
-            New-Item -ItemType Directory -Path $cacheDir -Force -ErrorAction Stop | Out-Null
+    if ($Force -or -not [System.IO.File]::Exists($cacheFile)) {
+        if (-not [System.IO.Directory]::Exists($cacheDir)) {
+            [System.IO.Directory]::CreateDirectory($cacheDir) | Out-Null
         }
 
         $global:LASTEXITCODE = 0
         $rawLines = @(& $Command)
         if ($LASTEXITCODE -ne 0 -or $rawLines.Count -eq 0) {
             Write-Warning "Failed to generate '$key' init cache (exit code: $LASTEXITCODE)."
-            Remove-Item -LiteralPath $cacheFile -Force -ErrorAction SilentlyContinue
+            if ([System.IO.File]::Exists($cacheFile)) {
+                [System.IO.File]::Delete($cacheFile)
+            }
             return
         }
 
@@ -359,7 +351,7 @@ function Use-CachedInit {
         ) | ForEach-Object { $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
         $transformedLines = $rawLines | ForEach-Object {
-            if ($_ -match '^\$Env:PATH\s*=\s*[''"]([^''"]+)[''"](.*)$') {
+            if ($_ -match '^\$\{?Env:PATH\}?\s*=\s*[''"]([^''"]+)[''"](.*)$') {
                 # Convert static PATH snapshot into non-destructive dynamic prepend against persistent Machine/User PATH
                 $capturedPaths = $Matches[1] -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
                 $remainder = $Matches[2]
@@ -367,7 +359,7 @@ function Use-CachedInit {
                 if ($addedPaths.Count -gt 0) {
                     foreach ($p in $addedPaths) {
                         $escapedPath = $p -replace "'", "''"
-                        "if ((Test-Path -LiteralPath '$escapedPath' -PathType Container) -and ((`$env:PATH -split ';') -notcontains '$escapedPath')) { `$env:PATH = '$escapedPath;' + `$env:PATH }"
+                        "if (`$env:PATH.IndexOf('$escapedPath', [System.StringComparison]::OrdinalIgnoreCase) -lt 0 -and [System.IO.Directory]::Exists('$escapedPath')) { `$env:PATH = '$escapedPath;' + `$env:PATH }"
                     }
                 }
                 if (-not [string]::IsNullOrWhiteSpace($remainder)) {
@@ -385,36 +377,11 @@ function Use-CachedInit {
             }
         }
 
-        ($transformedLines -join "`n") | Set-Content -LiteralPath $cacheFile -Encoding UTF8 -ErrorAction Stop
+        [System.IO.File]::WriteAllText($cacheFile, ($transformedLines -join "`n"), [System.Text.UTF8Encoding]::new($false))
     }
 
-    if (-not $NoLoad -and (IsInteractiveShell) -and (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
-        $__existingVars = @{}
-        foreach ($__v in (Get-Variable -Scope Local)) {
-            $__existingVars[$__v.Name] = $true
-        }
-        $__existingAliases = @{}
-        foreach ($__a in (Get-Alias)) {
-            $__existingAliases[$__a.Name] = $true
-        }
-
+    if (-not $NoLoad -and (IsInteractiveShell) -and [System.IO.File]::Exists($cacheFile)) {
         . $cacheFile
-
-        foreach ($__v in (Get-Variable -Scope Local)) {
-            if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -notmatch '^__') {
-                Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
-            }
-        }
-        foreach ($__fn in (Get-ChildItem -Path Function:\)) {
-            if ($__fn.Name -notin @('Use-CachedInit', 'prompt') -and $__fn.Name -notmatch '^__enable_' -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File -eq $cacheFile) {
-                Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
-            }
-        }
-        foreach ($__al in (Get-Alias)) {
-            if (-not $__existingAliases.ContainsKey($__al.Name) -and $__al.Options -notmatch 'ReadOnly|Constant') {
-                Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
-            }
-        }
     }
 }
 
@@ -429,8 +396,8 @@ function Update-InitCache {
     )
 
     $cacheDir = Get-ProfileCacheDir
-    if (-not (Test-Path -LiteralPath $cacheDir -PathType Container)) {
-        New-Item -ItemType Directory -Path $cacheDir -Force -ErrorAction Stop | Out-Null
+    if (-not [System.IO.Directory]::Exists($cacheDir)) {
+        [System.IO.Directory]::CreateDirectory($cacheDir) | Out-Null
     }
 
     if ($Tool -in @('All', 'oh-my-posh') -and (Test-Command oh-my-posh)) {
@@ -462,8 +429,8 @@ function Update-InitCache {
                     )
                 }
 
-                $ompScript | Set-Content -LiteralPath $ompCache -Encoding UTF8 -ErrorAction Stop
-                $theme | Set-Content -LiteralPath $ompThemeMeta -Encoding UTF8 -ErrorAction Stop
+                [System.IO.File]::WriteAllText($ompCache, $ompScript, [System.Text.UTF8Encoding]::new($false))
+                [System.IO.File]::WriteAllText($ompThemeMeta, $theme, [System.Text.UTF8Encoding]::new($false))
             }
         }
     }
@@ -475,7 +442,7 @@ function Update-InitCache {
             Write-Warning "Failed to generate zoxide init cache (exit code: $LASTEXITCODE)."
         }
         else {
-            ($zoxideLines -join "`n") | Set-Content -LiteralPath $zoxideCache -Encoding UTF8 -ErrorAction Stop
+            [System.IO.File]::WriteAllText($zoxideCache, ($zoxideLines -join "`n"), [System.Text.UTF8Encoding]::new($false))
         }
     }
 
@@ -497,9 +464,12 @@ function Clear-InitCache {
     param()
 
     $cacheDir = Get-ProfileCacheDir
-    if (Test-Path -LiteralPath $cacheDir -PathType Container) {
+    if ([System.IO.Directory]::Exists($cacheDir)) {
         Get-ChildItem -LiteralPath $cacheDir -Filter '*-init.ps1' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath (Join-Path $cacheDir 'omp-theme.txt') -Force -ErrorAction SilentlyContinue
+        $themeMeta = Join-Path $cacheDir 'omp-theme.txt'
+        if ([System.IO.File]::Exists($themeMeta)) {
+            [System.IO.File]::Delete($themeMeta)
+        }
     }
     Update-InitCache -Tool 'All'
     Write-Host 'Shell initialization cache rebuilt.' -ForegroundColor Green
@@ -524,15 +494,15 @@ function Initialize-PromptTool {
     $theme = Resolve-OhMyPoshTheme
 
     if ($theme) {
-        $cachedTheme = if (Test-Path -LiteralPath $ompThemeMeta -PathType Leaf) {
-            ([string](Get-Content -LiteralPath $ompThemeMeta -Raw -ErrorAction SilentlyContinue)).Trim()
+        $cachedTheme = if ([System.IO.File]::Exists($ompThemeMeta)) {
+            [System.IO.File]::ReadAllText($ompThemeMeta).Trim()
         } else { $null }
 
-        if (-not (Test-Path -LiteralPath $ompCache -PathType Leaf) -or $cachedTheme -ne $theme) {
+        if (-not [System.IO.File]::Exists($ompCache) -or $cachedTheme -ne $theme) {
             Update-InitCache -Tool 'oh-my-posh'
         }
 
-        if (Test-Path -LiteralPath $ompCache -PathType Leaf) {
+        if ([System.IO.File]::Exists($ompCache)) {
             . $ompCache
             $ompLoaded = $true
         }
@@ -550,120 +520,63 @@ function Initialize-PromptTool {
 
     # 2. zoxide (Cached)
     $zoxideCache = Join-Path $cacheDir 'zoxide-init.ps1'
-    if (-not (Test-Path -LiteralPath $zoxideCache -PathType Leaf)) {
+    if (-not [System.IO.File]::Exists($zoxideCache)) {
         Update-InitCache -Tool 'zoxide'
     }
-    if (Test-Path -LiteralPath $zoxideCache -PathType Leaf) {
+    if ([System.IO.File]::Exists($zoxideCache)) {
         . $zoxideCache
     }
 }
 
 # ======================================================================
-# Module 30: PSReadLine, Completions & Deferred Modules
+# Module 30: PSReadLine, Completions & Deferred Modules (PowerShell 7+)
 # ======================================================================
-
-function Set-PSReadLineOptionsCompat {
-    [CmdletBinding(SupportsShouldProcess)]
-    param([Parameter(Mandatory)][hashtable]$Options)
-
-    $safeOptions = $Options.Clone()
-    $psrl = Get-Module -Name PSReadLine
-    if (-not $psrl) {
-        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
-    }
-    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
-
-    if ($psrlVersion -lt [version]'2.0.0') {
-        $safeOptions.Remove('PredictionSource')
-        $safeOptions.Remove('Colors')
-    }
-    if ($psrlVersion -lt [version]'2.1.0') {
-        $safeOptions.Remove('PredictionViewStyle')
-    }
-
-    if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set PSReadLine options')) {
-        try {
-            Set-PSReadLineOption @safeOptions
-        }
-        catch {
-            Write-Verbose "Unable to set all PSReadLine options: $_"
-        }
-    }
-}
-
-function Set-PredictionSource {
-    [CmdletBinding(SupportsShouldProcess)]
-    param()
-
-    $psrl = Get-Module -Name PSReadLine
-    if (-not $psrl) {
-        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
-    }
-    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
-
-    if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set prediction source')) {
-        if ($psrlVersion -ge [version]'2.1.0' -and $PSVersionTable.PSEdition -eq 'Core') {
-            try {
-                Set-PSReadLineOption -PredictionSource HistoryAndPlugin
-            }
-            catch {
-                Write-Verbose "Unable to set PredictionSource to HistoryAndPlugin: $_"
-            }
-        }
-
-        try {
-            Set-PSReadLineOption -MaximumHistoryCount 10000
-        }
-        catch {
-            Write-Verbose "Unable to set MaximumHistoryCount: $_"
-        }
-    }
-}
 
 function Initialize-PSReadLine {
     if (-not (IsInteractiveShell)) {
         return
     }
 
-    $psrl = Get-Module -Name PSReadLine
-    if (-not $psrl) {
-        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
-    }
-    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
+    try {
+        Set-PSReadLineOption -EditMode Windows `
+            -HistoryNoDuplicates `
+            -HistorySearchCursorMovesToEnd `
+            -BellStyle None `
+            -MaximumHistoryCount 10000 `
+            -Colors @{
+                Command   = '#87CEEB'
+                Parameter = '#98FB98'
+                Operator  = '#FFB6C1'
+                Variable  = '#DDA0DD'
+                String    = '#FFDAB9'
+                Number    = '#B0E0E6'
+                Type      = '#F0E68C'
+                Comment   = '#D3D3D3'
+                Keyword   = '#8367c7'
+                Error     = '#FF6347'
+            } `
+            -AddToHistoryHandler {
+                param([string]$line)
+                $normalized = $line -replace '[-_ ]', ''
+                $normalized -notmatch '(?i)(password|passwd|pwd|secret|token|apikey|connectionstring|credential)'
+            }
 
-    $options = @{
-        EditMode                      = 'Windows'
-        HistoryNoDuplicates           = $true
-        HistorySearchCursorMovesToEnd = $true
-        PredictionSource              = 'History'
-        PredictionViewStyle           = 'ListView'
-        BellStyle                     = 'None'
-        Colors                        = @{
-            Command   = '#87CEEB'
-            Parameter = '#98FB98'
-            Operator  = '#FFB6C1'
-            Variable  = '#DDA0DD'
-            String    = '#FFDAB9'
-            Number    = '#B0E0E6'
-            Type      = '#F0E68C'
-            Comment   = '#D3D3D3'
-            Keyword   = '#8367c7'
-            Error     = '#FF6347'
-        }
+        Set-PSReadLineOption -PredictionSource HistoryAndPlugin -PredictionViewStyle ListView
     }
-
-    Set-PSReadLineOptionsCompat -Options $options
+    catch {
+        Write-Verbose "Unable to set all PSReadLine options: $_"
+    }
 
     $keyBindings = @(
-        @{ Key = 'UpArrow'; Function = 'HistorySearchBackward' },
-        @{ Key = 'DownArrow'; Function = 'HistorySearchForward' },
-        @{ Key = 'Tab'; Function = 'MenuComplete' },
-        @{ Chord = 'Ctrl+d'; Function = 'DeleteChar' },
-        @{ Chord = 'Ctrl+w'; Function = 'BackwardDeleteWord' },
-        @{ Chord = 'Alt+d'; Function = 'DeleteWord' },
-        @{ Chord = 'Ctrl+LeftArrow'; Function = 'BackwardWord' },
-        @{ Chord = 'Ctrl+RightArrow'; Function = 'ForwardWord' },
-        @{ Chord = 'Ctrl+z'; Function = 'Undo' },
+        @{ Key = 'UpArrow'; Function = 'HistorySearchBackward' }
+        @{ Key = 'DownArrow'; Function = 'HistorySearchForward' }
+        @{ Key = 'Tab'; Function = 'MenuComplete' }
+        @{ Chord = 'Ctrl+d'; Function = 'DeleteChar' }
+        @{ Chord = 'Ctrl+w'; Function = 'BackwardDeleteWord' }
+        @{ Chord = 'Alt+d'; Function = 'DeleteWord' }
+        @{ Chord = 'Ctrl+LeftArrow'; Function = 'BackwardWord' }
+        @{ Chord = 'Ctrl+RightArrow'; Function = 'ForwardWord' }
+        @{ Chord = 'Ctrl+z'; Function = 'Undo' }
         @{ Chord = 'Ctrl+y'; Function = 'Redo' }
     )
 
@@ -675,21 +588,6 @@ function Initialize-PSReadLine {
             Write-Verbose "Failed to bind PSReadLine key: $_"
         }
     }
-
-    if ($psrlVersion -ge [version]'2.0.0') {
-        try {
-            Set-PSReadLineOption -AddToHistoryHandler {
-                param([string]$line)
-                $normalized = $line -replace '[-_ ]', ''
-                $normalized -notmatch '(?i)(password|passwd|pwd|secret|token|apikey|connectionstring|credential)'
-            }
-        }
-        catch {
-            Write-Verbose "Unable to set AddToHistoryHandler: $_"
-        }
-    }
-
-    Set-PredictionSource
 }
 
 function Register-CustomCompletion {
@@ -703,10 +601,8 @@ function Register-CustomCompletion {
         deno = @('run', 'compile', 'bundle', 'test', 'lint', 'fmt', 'cache', 'info', 'doc', 'upgrade')
     }
 
-    $nativeParams = if ($PSVersionTable.PSEdition -eq 'Core') { @{ Native = $true } } else { @{} }
-
     try {
-        Register-ArgumentCompleter @nativeParams -CommandName git, npm, deno -ScriptBlock {
+        Register-ArgumentCompleter -Native -CommandName git, npm, deno -ScriptBlock {
             param($wordToComplete, $commandAst, $cursorPosition)
             $null = $cursorPosition
             $completionWord = $wordToComplete
@@ -720,7 +616,7 @@ function Register-CustomCompletion {
             }
         }.GetNewClosure()
 
-        Register-ArgumentCompleter @nativeParams -CommandName dotnet -ScriptBlock {
+        Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock {
             param($wordToComplete, $commandAst, $cursorPosition)
             $null = $wordToComplete
             if (Get-Command -Name dotnet -ErrorAction SilentlyContinue) {
@@ -1494,7 +1390,7 @@ function Update-Profile {
             throw "Downloaded profile has syntax errors: $($parseErrors[0].Message)"
         }
 
-        $targetExists = Test-Path -LiteralPath $target -PathType Leaf
+        $targetExists = [System.IO.File]::Exists($target)
         $oldHash = if ($targetExists) { (Get-FileHash -LiteralPath $target -ErrorAction Stop).Hash } else { $null }
         $newHash = (Get-FileHash -LiteralPath $tempFile -ErrorAction Stop).Hash
 
@@ -1639,7 +1535,7 @@ System & Shortcuts:
 
 function Initialize-CustomProfile {
     $customDir = Get-ProfileCustomDir
-    if (Test-Path -LiteralPath $customDir -PathType Container) {
+    if ([System.IO.Directory]::Exists($customDir)) {
         foreach ($customFile in (Get-ChildItem -LiteralPath $customDir -Filter '*.ps1' -File | Sort-Object Name)) {
             try {
                 . $customFile.FullName

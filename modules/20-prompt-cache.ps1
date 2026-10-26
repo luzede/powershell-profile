@@ -1,14 +1,14 @@
 # ======================================================================
-# Module 20: Prompt, Themes & Cached Tool Initialization
+# Module 20: Prompt, Themes & Cached Tool Initialization (PowerShell 7+)
 # ======================================================================
 
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $global:RegisteredCachedInits) {
     $global:RegisteredCachedInits = @{}
 }
 
 if (IsInteractiveShell) {
     try {
+        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
         $adminSuffix = if ($isAdmin) { ' [ADMIN]' } else { '' }
         $Host.UI.RawUI.WindowTitle = "PowerShell $($PSVersionTable.PSVersion)$adminSuffix"
     }
@@ -27,8 +27,8 @@ function Get-Theme {
     $themeDir = Join-Path (Get-ProfileDir) 'Themes'
     $themePath = Join-Path $themeDir "$theme.omp.json"
 
-    if (-not (Test-Path -LiteralPath $themeDir -PathType Container)) {
-        New-Item -Path $themeDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+    if (-not [System.IO.Directory]::Exists($themeDir)) {
+        [System.IO.Directory]::CreateDirectory($themeDir) | Out-Null
     }
 
     try {
@@ -54,7 +54,7 @@ function Set-Theme {
     $themesDir = Join-Path (Get-ProfileDir) 'Themes'
     $themePath = Join-Path $themesDir "$theme.omp.json"
 
-    if (-not (Test-Path -LiteralPath $themePath -PathType Leaf)) {
+    if (-not [System.IO.File]::Exists($themePath)) {
         $downloaded = Get-Theme -ThemeName $theme
         if (-not $downloaded) {
             return
@@ -70,19 +70,17 @@ function Set-Theme {
 }
 
 function Resolve-OhMyPoshTheme {
-    $poshConfig = if ($env:POSH_CONFIG) { $env:POSH_CONFIG } else { [Environment]::GetEnvironmentVariable('POSH_CONFIG', 'User') }
-
-    $candidates = @(
-        $poshConfig,
-        (Join-Path (Join-Path (Get-ProfileDir) 'Themes') 'cobalt2.omp.json')
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            return $candidate
-        }
+    if ($env:POSH_CONFIG -and [System.IO.File]::Exists($env:POSH_CONFIG)) {
+        return $env:POSH_CONFIG
     }
-
+    $userPoshConfig = [Environment]::GetEnvironmentVariable('POSH_CONFIG', 'User')
+    if ($userPoshConfig -and [System.IO.File]::Exists($userPoshConfig)) {
+        return $userPoshConfig
+    }
+    $defaultTheme = Join-Path (Get-ProfileDir) 'Themes\cobalt2.omp.json'
+    if ([System.IO.File]::Exists($defaultTheme)) {
+        return $defaultTheme
+    }
     return $null
 }
 
@@ -116,16 +114,18 @@ function Use-CachedInit {
     $cacheDir = Get-ProfileCacheDir
     $cacheFile = Join-Path $cacheDir "$key-init.ps1"
 
-    if ($Force -or -not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
-        if (-not (Test-Path -LiteralPath $cacheDir -PathType Container)) {
-            New-Item -ItemType Directory -Path $cacheDir -Force -ErrorAction Stop | Out-Null
+    if ($Force -or -not [System.IO.File]::Exists($cacheFile)) {
+        if (-not [System.IO.Directory]::Exists($cacheDir)) {
+            [System.IO.Directory]::CreateDirectory($cacheDir) | Out-Null
         }
 
         $global:LASTEXITCODE = 0
         $rawLines = @(& $Command)
         if ($LASTEXITCODE -ne 0 -or $rawLines.Count -eq 0) {
             Write-Warning "Failed to generate '$key' init cache (exit code: $LASTEXITCODE)."
-            Remove-Item -LiteralPath $cacheFile -Force -ErrorAction SilentlyContinue
+            if ([System.IO.File]::Exists($cacheFile)) {
+                [System.IO.File]::Delete($cacheFile)
+            }
             return
         }
 
@@ -136,7 +136,7 @@ function Use-CachedInit {
         ) | ForEach-Object { $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
         $transformedLines = $rawLines | ForEach-Object {
-            if ($_ -match '^\$Env:PATH\s*=\s*[''"]([^''"]+)[''"](.*)$') {
+            if ($_ -match '^\$\{?Env:PATH\}?\s*=\s*[''"]([^''"]+)[''"](.*)$') {
                 # Convert static PATH snapshot into non-destructive dynamic prepend against persistent Machine/User PATH
                 $capturedPaths = $Matches[1] -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
                 $remainder = $Matches[2]
@@ -144,7 +144,7 @@ function Use-CachedInit {
                 if ($addedPaths.Count -gt 0) {
                     foreach ($p in $addedPaths) {
                         $escapedPath = $p -replace "'", "''"
-                        "if ((Test-Path -LiteralPath '$escapedPath' -PathType Container) -and ((`$env:PATH -split ';') -notcontains '$escapedPath')) { `$env:PATH = '$escapedPath;' + `$env:PATH }"
+                        "if (`$env:PATH.IndexOf('$escapedPath', [System.StringComparison]::OrdinalIgnoreCase) -lt 0 -and [System.IO.Directory]::Exists('$escapedPath')) { `$env:PATH = '$escapedPath;' + `$env:PATH }"
                     }
                 }
                 if (-not [string]::IsNullOrWhiteSpace($remainder)) {
@@ -162,36 +162,11 @@ function Use-CachedInit {
             }
         }
 
-        ($transformedLines -join "`n") | Set-Content -LiteralPath $cacheFile -Encoding UTF8 -ErrorAction Stop
+        [System.IO.File]::WriteAllText($cacheFile, ($transformedLines -join "`n"), [System.Text.UTF8Encoding]::new($false))
     }
 
-    if (-not $NoLoad -and (IsInteractiveShell) -and (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
-        $__existingVars = @{}
-        foreach ($__v in (Get-Variable -Scope Local)) {
-            $__existingVars[$__v.Name] = $true
-        }
-        $__existingAliases = @{}
-        foreach ($__a in (Get-Alias)) {
-            $__existingAliases[$__a.Name] = $true
-        }
-
+    if (-not $NoLoad -and (IsInteractiveShell) -and [System.IO.File]::Exists($cacheFile)) {
         . $cacheFile
-
-        foreach ($__v in (Get-Variable -Scope Local)) {
-            if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -notmatch '^__') {
-                Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
-            }
-        }
-        foreach ($__fn in (Get-ChildItem -Path Function:\)) {
-            if ($__fn.Name -notin @('Use-CachedInit', 'prompt') -and $__fn.Name -notmatch '^__enable_' -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File -eq $cacheFile) {
-                Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
-            }
-        }
-        foreach ($__al in (Get-Alias)) {
-            if (-not $__existingAliases.ContainsKey($__al.Name) -and $__al.Options -notmatch 'ReadOnly|Constant') {
-                Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
-            }
-        }
     }
 }
 
@@ -206,8 +181,8 @@ function Update-InitCache {
     )
 
     $cacheDir = Get-ProfileCacheDir
-    if (-not (Test-Path -LiteralPath $cacheDir -PathType Container)) {
-        New-Item -ItemType Directory -Path $cacheDir -Force -ErrorAction Stop | Out-Null
+    if (-not [System.IO.Directory]::Exists($cacheDir)) {
+        [System.IO.Directory]::CreateDirectory($cacheDir) | Out-Null
     }
 
     if ($Tool -in @('All', 'oh-my-posh') -and (Test-Command oh-my-posh)) {
@@ -239,8 +214,8 @@ function Update-InitCache {
                     )
                 }
 
-                $ompScript | Set-Content -LiteralPath $ompCache -Encoding UTF8 -ErrorAction Stop
-                $theme | Set-Content -LiteralPath $ompThemeMeta -Encoding UTF8 -ErrorAction Stop
+                [System.IO.File]::WriteAllText($ompCache, $ompScript, [System.Text.UTF8Encoding]::new($false))
+                [System.IO.File]::WriteAllText($ompThemeMeta, $theme, [System.Text.UTF8Encoding]::new($false))
             }
         }
     }
@@ -252,7 +227,7 @@ function Update-InitCache {
             Write-Warning "Failed to generate zoxide init cache (exit code: $LASTEXITCODE)."
         }
         else {
-            ($zoxideLines -join "`n") | Set-Content -LiteralPath $zoxideCache -Encoding UTF8 -ErrorAction Stop
+            [System.IO.File]::WriteAllText($zoxideCache, ($zoxideLines -join "`n"), [System.Text.UTF8Encoding]::new($false))
         }
     }
 
@@ -274,9 +249,12 @@ function Clear-InitCache {
     param()
 
     $cacheDir = Get-ProfileCacheDir
-    if (Test-Path -LiteralPath $cacheDir -PathType Container) {
+    if ([System.IO.Directory]::Exists($cacheDir)) {
         Get-ChildItem -LiteralPath $cacheDir -Filter '*-init.ps1' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath (Join-Path $cacheDir 'omp-theme.txt') -Force -ErrorAction SilentlyContinue
+        $themeMeta = Join-Path $cacheDir 'omp-theme.txt'
+        if ([System.IO.File]::Exists($themeMeta)) {
+            [System.IO.File]::Delete($themeMeta)
+        }
     }
     Update-InitCache -Tool 'All'
     Write-Host 'Shell initialization cache rebuilt.' -ForegroundColor Green
@@ -301,15 +279,15 @@ function Initialize-PromptTool {
     $theme = Resolve-OhMyPoshTheme
 
     if ($theme) {
-        $cachedTheme = if (Test-Path -LiteralPath $ompThemeMeta -PathType Leaf) {
-            ([string](Get-Content -LiteralPath $ompThemeMeta -Raw -ErrorAction SilentlyContinue)).Trim()
+        $cachedTheme = if ([System.IO.File]::Exists($ompThemeMeta)) {
+            [System.IO.File]::ReadAllText($ompThemeMeta).Trim()
         } else { $null }
 
-        if (-not (Test-Path -LiteralPath $ompCache -PathType Leaf) -or $cachedTheme -ne $theme) {
+        if (-not [System.IO.File]::Exists($ompCache) -or $cachedTheme -ne $theme) {
             Update-InitCache -Tool 'oh-my-posh'
         }
 
-        if (Test-Path -LiteralPath $ompCache -PathType Leaf) {
+        if ([System.IO.File]::Exists($ompCache)) {
             . $ompCache
             $ompLoaded = $true
         }
@@ -327,10 +305,10 @@ function Initialize-PromptTool {
 
     # 2. zoxide (Cached)
     $zoxideCache = Join-Path $cacheDir 'zoxide-init.ps1'
-    if (-not (Test-Path -LiteralPath $zoxideCache -PathType Leaf)) {
+    if (-not [System.IO.File]::Exists($zoxideCache)) {
         Update-InitCache -Tool 'zoxide'
     }
-    if (Test-Path -LiteralPath $zoxideCache -PathType Leaf) {
+    if ([System.IO.File]::Exists($zoxideCache)) {
         . $zoxideCache
     }
 }

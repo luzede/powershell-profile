@@ -1,109 +1,52 @@
 # ======================================================================
-# Module 30: PSReadLine, Completions & Deferred Modules
+# Module 30: PSReadLine, Completions & Deferred Modules (PowerShell 7+)
 # ======================================================================
-
-function Set-PSReadLineOptionsCompat {
-    [CmdletBinding(SupportsShouldProcess)]
-    param([Parameter(Mandatory)][hashtable]$Options)
-
-    $safeOptions = $Options.Clone()
-    $psrl = Get-Module -Name PSReadLine
-    if (-not $psrl) {
-        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
-    }
-    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
-
-    if ($psrlVersion -lt [version]'2.0.0') {
-        $safeOptions.Remove('PredictionSource')
-        $safeOptions.Remove('Colors')
-    }
-    if ($psrlVersion -lt [version]'2.1.0') {
-        $safeOptions.Remove('PredictionViewStyle')
-    }
-
-    if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set PSReadLine options')) {
-        try {
-            Set-PSReadLineOption @safeOptions
-        }
-        catch {
-            Write-Verbose "Unable to set all PSReadLine options: $_"
-        }
-    }
-}
-
-function Set-PredictionSource {
-    [CmdletBinding(SupportsShouldProcess)]
-    param()
-
-    $psrl = Get-Module -Name PSReadLine
-    if (-not $psrl) {
-        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
-    }
-    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
-
-    if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set prediction source')) {
-        if ($psrlVersion -ge [version]'2.1.0' -and $PSVersionTable.PSEdition -eq 'Core') {
-            try {
-                Set-PSReadLineOption -PredictionSource HistoryAndPlugin
-            }
-            catch {
-                Write-Verbose "Unable to set PredictionSource to HistoryAndPlugin: $_"
-            }
-        }
-
-        try {
-            Set-PSReadLineOption -MaximumHistoryCount 10000
-        }
-        catch {
-            Write-Verbose "Unable to set MaximumHistoryCount: $_"
-        }
-    }
-}
 
 function Initialize-PSReadLine {
     if (-not (IsInteractiveShell)) {
         return
     }
 
-    $psrl = Get-Module -Name PSReadLine
-    if (-not $psrl) {
-        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
-    }
-    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
+    try {
+        Set-PSReadLineOption -EditMode Windows `
+            -HistoryNoDuplicates `
+            -HistorySearchCursorMovesToEnd `
+            -BellStyle None `
+            -MaximumHistoryCount 10000 `
+            -Colors @{
+                Command   = '#87CEEB'
+                Parameter = '#98FB98'
+                Operator  = '#FFB6C1'
+                Variable  = '#DDA0DD'
+                String    = '#FFDAB9'
+                Number    = '#B0E0E6'
+                Type      = '#F0E68C'
+                Comment   = '#D3D3D3'
+                Keyword   = '#8367c7'
+                Error     = '#FF6347'
+            } `
+            -AddToHistoryHandler {
+                param([string]$line)
+                $normalized = $line -replace '[-_ ]', ''
+                $normalized -notmatch '(?i)(password|passwd|pwd|secret|token|apikey|connectionstring|credential)'
+            }
 
-    $options = @{
-        EditMode                      = 'Windows'
-        HistoryNoDuplicates           = $true
-        HistorySearchCursorMovesToEnd = $true
-        PredictionSource              = 'History'
-        PredictionViewStyle           = 'ListView'
-        BellStyle                     = 'None'
-        Colors                        = @{
-            Command   = '#87CEEB'
-            Parameter = '#98FB98'
-            Operator  = '#FFB6C1'
-            Variable  = '#DDA0DD'
-            String    = '#FFDAB9'
-            Number    = '#B0E0E6'
-            Type      = '#F0E68C'
-            Comment   = '#D3D3D3'
-            Keyword   = '#8367c7'
-            Error     = '#FF6347'
-        }
+        Set-PSReadLineOption -PredictionSource HistoryAndPlugin -PredictionViewStyle ListView
     }
-
-    Set-PSReadLineOptionsCompat -Options $options
+    catch {
+        Write-Verbose "Unable to set all PSReadLine options: $_"
+    }
 
     $keyBindings = @(
-        @{ Key = 'UpArrow'; Function = 'HistorySearchBackward' },
-        @{ Key = 'DownArrow'; Function = 'HistorySearchForward' },
-        @{ Key = 'Tab'; Function = 'MenuComplete' },
-        @{ Chord = 'Ctrl+d'; Function = 'DeleteChar' },
-        @{ Chord = 'Ctrl+w'; Function = 'BackwardDeleteWord' },
-        @{ Chord = 'Alt+d'; Function = 'DeleteWord' },
-        @{ Chord = 'Ctrl+LeftArrow'; Function = 'BackwardWord' },
-        @{ Chord = 'Ctrl+RightArrow'; Function = 'ForwardWord' },
-        @{ Chord = 'Ctrl+z'; Function = 'Undo' },
+        @{ Key = 'UpArrow'; Function = 'HistorySearchBackward' }
+        @{ Key = 'DownArrow'; Function = 'HistorySearchForward' }
+        @{ Key = 'Tab'; Function = 'MenuComplete' }
+        @{ Chord = 'Ctrl+d'; Function = 'DeleteChar' }
+        @{ Chord = 'Ctrl+w'; Function = 'BackwardDeleteWord' }
+        @{ Chord = 'Alt+d'; Function = 'DeleteWord' }
+        @{ Chord = 'Ctrl+LeftArrow'; Function = 'BackwardWord' }
+        @{ Chord = 'Ctrl+RightArrow'; Function = 'ForwardWord' }
+        @{ Chord = 'Ctrl+z'; Function = 'Undo' }
         @{ Chord = 'Ctrl+y'; Function = 'Redo' }
     )
 
@@ -115,21 +58,6 @@ function Initialize-PSReadLine {
             Write-Verbose "Failed to bind PSReadLine key: $_"
         }
     }
-
-    if ($psrlVersion -ge [version]'2.0.0') {
-        try {
-            Set-PSReadLineOption -AddToHistoryHandler {
-                param([string]$line)
-                $normalized = $line -replace '[-_ ]', ''
-                $normalized -notmatch '(?i)(password|passwd|pwd|secret|token|apikey|connectionstring|credential)'
-            }
-        }
-        catch {
-            Write-Verbose "Unable to set AddToHistoryHandler: $_"
-        }
-    }
-
-    Set-PredictionSource
 }
 
 function Register-CustomCompletion {
@@ -143,10 +71,8 @@ function Register-CustomCompletion {
         deno = @('run', 'compile', 'bundle', 'test', 'lint', 'fmt', 'cache', 'info', 'doc', 'upgrade')
     }
 
-    $nativeParams = if ($PSVersionTable.PSEdition -eq 'Core') { @{ Native = $true } } else { @{} }
-
     try {
-        Register-ArgumentCompleter @nativeParams -CommandName git, npm, deno -ScriptBlock {
+        Register-ArgumentCompleter -Native -CommandName git, npm, deno -ScriptBlock {
             param($wordToComplete, $commandAst, $cursorPosition)
             $null = $cursorPosition
             $completionWord = $wordToComplete
@@ -160,7 +86,7 @@ function Register-CustomCompletion {
             }
         }.GetNewClosure()
 
-        Register-ArgumentCompleter @nativeParams -CommandName dotnet -ScriptBlock {
+        Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock {
             param($wordToComplete, $commandAst, $cursorPosition)
             $null = $wordToComplete
             if (Get-Command -Name dotnet -ErrorAction SilentlyContinue) {
@@ -194,4 +120,3 @@ function Initialize-OptionalModule {
         }
     } | Out-Null
 }
-

@@ -5,6 +5,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw "This profile generator requires PowerShell 7 or higher. Current version: $($PSVersionTable.PSVersion)"
+}
+
 $modulesDir = Join-Path -Path $PSScriptRoot -ChildPath 'modules'
 $bundledPath = Join-Path -Path $PSScriptRoot -ChildPath 'Microsoft.PowerShell_profile.ps1'
 $hooksDir = Join-Path -Path $PSScriptRoot -ChildPath '.githooks'

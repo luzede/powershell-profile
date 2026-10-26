@@ -24,7 +24,7 @@ function Update-Profile {
             throw "Downloaded profile has syntax errors: $($parseErrors[0].Message)"
         }
 
-        $targetExists = Test-Path -LiteralPath $target -PathType Leaf
+        $targetExists = [System.IO.File]::Exists($target)
         $oldHash = if ($targetExists) { (Get-FileHash -LiteralPath $target -ErrorAction Stop).Hash } else { $null }
         $newHash = (Get-FileHash -LiteralPath $tempFile -ErrorAction Stop).Hash
 
@@ -169,7 +169,7 @@ System & Shortcuts:
 
 function Initialize-CustomProfile {
     $customDir = Get-ProfileCustomDir
-    if (Test-Path -LiteralPath $customDir -PathType Container) {
+    if ([System.IO.Directory]::Exists($customDir)) {
         foreach ($customFile in (Get-ChildItem -LiteralPath $customDir -Filter '*.ps1' -File | Sort-Object Name)) {
             try {
                 . $customFile.FullName

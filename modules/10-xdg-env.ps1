@@ -9,7 +9,7 @@ if (-not $env:XDG_DATA_HOME)   { $env:XDG_DATA_HOME   = "$HOME\.local\share" }
 if (-not $env:XDG_CACHE_HOME)  { $env:XDG_CACHE_HOME  = "$HOME\.cache" }
 if (-not $env:XDG_STATE_HOME)  { $env:XDG_STATE_HOME  = "$HOME\.local\state" }
 
-if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
+if ($env:PATH.IndexOf($env:XDG_BIN_HOME, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
     $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
 }
 
@@ -26,7 +26,7 @@ function Initialize-XdgEnvironment {
     $customDir = Get-ProfileCustomDir
     $profileDir = Get-ProfileDir
     $sentinelFile = Join-Path $profileDir '.xdg-initialized'
-    if (-not $Force -and (Test-Path -LiteralPath $sentinelFile -PathType Leaf)) {
+    if (-not $Force -and [System.IO.File]::Exists($sentinelFile)) {
         return
     }
 
@@ -51,13 +51,13 @@ function Initialize-XdgEnvironment {
             Write-Warning "Skipping XDG directory with non-absolute path: '$dir'"
             continue
         }
-        if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
-            New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+        if (-not [System.IO.Directory]::Exists($dir)) {
+            [System.IO.Directory]::CreateDirectory($dir) | Out-Null
         }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME) -and [System.IO.Path]::IsPathRooted($env:XDG_BIN_HOME)) {
-        if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
+        if ($env:PATH.IndexOf($env:XDG_BIN_HOME, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
             $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
         }
 
@@ -79,13 +79,16 @@ function Initialize-XdgEnvironment {
         }
     }
 
-    Get-Date -Format 'o' | Set-Content -LiteralPath $sentinelFile -Encoding UTF8 -ErrorAction Stop
+    [System.IO.File]::WriteAllText($sentinelFile, (Get-Date -Format 'o'))
 }
 
-# Run XDG provisioning safely (it checks its own sentinel unless -Force is given)
-try {
-    Initialize-XdgEnvironment -ErrorAction Stop
-}
-catch {
-    Write-Warning "XDG environment provisioning failed: $_"
+# Run XDG provisioning safely (fast-path sentinel check)
+$script:xdgSentinel = Join-Path (Get-ProfileDir) '.xdg-initialized'
+if (-not [System.IO.File]::Exists($script:xdgSentinel)) {
+    try {
+        Initialize-XdgEnvironment -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "XDG environment provisioning failed: $_"
+    }
 }
