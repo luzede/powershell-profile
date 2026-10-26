@@ -45,7 +45,7 @@ function Update-Profile {
             if ($targetExists) {
                 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
                 $backupPath = Join-Path $targetDir "oldprofile-$timestamp.ps1"
-                Copy-Item -LiteralPath $target -Destination $backupPath -Force
+                Copy-Item -LiteralPath $target -Destination $backupPath -Force -ErrorAction Stop
             }
 
             Move-Item -LiteralPath $tempFile -Destination $target -Force -ErrorAction Stop

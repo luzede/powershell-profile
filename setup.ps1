@@ -139,7 +139,7 @@ function Install-WinGetPackage {
     }
 
     try {
-        winget install --id $Id --exact --source winget --accept-source-agreements --accept-package-agreements --silent
+        $null = winget install --id $Id --exact --source winget --accept-source-agreements --accept-package-agreements --silent
         # 0 = installed, -1978335189 (0x8A15002B) = already installed / no applicable update, -1978335135 (0x8A150061) = package already installed
         if ($LASTEXITCODE -notin @(0, -1978335189, -1978335135)) {
             Write-Warning "winget failed to install $Name. Exit code: $LASTEXITCODE"
@@ -243,9 +243,9 @@ function Install-NerdFont {
             }
         }
 
-        $installedFamilies = Get-InstalledFontName
-        if ($installedFamilies -notcontains $FontDisplayName) {
-            Write-Warning "Font [$FontDisplayName] installation timed out or font was not registered."
+        $installedFamilies = @(Get-InstalledFontName)
+        if ($installedFamilies.Count -gt 0 -and $installedFamilies -notcontains $FontDisplayName) {
+            Write-Warning "Font [$FontDisplayName] was not registered (installed families: $($installedFamilies.Count))."
             return $false
         }
 
@@ -276,11 +276,13 @@ function Install-TerminalIconsModule {
 
 if (-not (Test-IsAdministrator)) {
     Write-Warning 'Please run this script as an Administrator.'
-    exit 1
+    $global:LASTEXITCODE = 1
+    return
 }
 
 if (-not (Test-InternetConnection)) {
-    exit 1
+    $global:LASTEXITCODE = 1
+    return
 }
 
 try {
@@ -330,7 +332,8 @@ if ($installedProfileHash -and (Test-Path -LiteralPath $profilePath -PathType Le
 
 if ($failures.Count -gt 0) {
     Write-Warning "Setup completed with $($failures.Count) issue(s): $($failures -join ', ')."
-    exit 1
+    $global:LASTEXITCODE = 1
+    return
 }
 
 Write-Host 'Setup completed successfully. Restart PowerShell to load the profile.'

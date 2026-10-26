@@ -13,14 +13,12 @@ function Set-PSReadLineOptionsCompat {
     }
     $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
 
-    if ($psrlVersion -lt [version]'2.1.0') {
-        $safeOptions.Remove('PredictionSource')
-    }
-    if ($psrlVersion -lt [version]'2.2.0') {
-        $safeOptions.Remove('PredictionViewStyle')
-    }
     if ($psrlVersion -lt [version]'2.0.0') {
+        $safeOptions.Remove('PredictionSource')
         $safeOptions.Remove('Colors')
+    }
+    if ($psrlVersion -lt [version]'2.1.0') {
+        $safeOptions.Remove('PredictionViewStyle')
     }
 
     if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set PSReadLine options')) {
@@ -181,9 +179,10 @@ function Initialize-OptionalModule {
         return
     }
 
-    if (Get-EventSubscriber -SourceIdentifier PowerShell.OnIdle -ErrorAction SilentlyContinue) {
+    if ($global:__terminalIconsScheduled) {
         return
     }
+    $global:__terminalIconsScheduled = $true
 
     # Defer heavy Terminal-Icons module import to OnIdle so prompt renders immediately
     Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -Action {

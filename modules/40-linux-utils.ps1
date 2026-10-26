@@ -46,19 +46,19 @@ function pubip {
 
 function winutil {
     [CmdletBinding(SupportsShouldProcess)]
-    param()
+    param([Parameter(ValueFromRemainingArguments)][object[]]$Rest)
     if ($PSCmdlet.ShouldProcess('https://christitus.com/win', 'Download and run Chris Titus WinUtil script')) {
         $scriptText = Get-UriContent -Uri 'https://christitus.com/win'
-        & ([ScriptBlock]::Create($scriptText)) @args
+        & ([ScriptBlock]::Create($scriptText)) @Rest
     }
 }
 
 function winutildev {
     [CmdletBinding(SupportsShouldProcess)]
-    param()
+    param([Parameter(ValueFromRemainingArguments)][object[]]$Rest)
     if ($PSCmdlet.ShouldProcess('https://christitus.com/windev', 'Download and run Chris Titus WinUtil Dev script')) {
         $scriptText = Get-UriContent -Uri 'https://christitus.com/windev'
-        & ([ScriptBlock]::Create($scriptText)) @args
+        & ([ScriptBlock]::Create($scriptText)) @Rest
     }
 }
 
@@ -171,12 +171,11 @@ function grep {
     process {
         if ($PSBoundParameters.ContainsKey('InputObject') -and $null -ne $InputObject) {
             $hasPipeline = $true
-            $matches = @($InputObject | Select-String @selectParams)
             if ($Count) {
-                $totalMatches += $matches.Count
+                $totalMatches += @($InputObject | Select-String @selectParams).Count
             }
             else {
-                $matches
+                $InputObject | Select-String @selectParams
             }
         }
     }
@@ -185,24 +184,31 @@ function grep {
         if (-not $hasPipeline) {
             if ($Path -and $Path.Count -gt 0) {
                 foreach ($item in $Path) {
-                    $matches = @(
-                        if (Test-Path -LiteralPath $item -PathType Container) {
-                            $childParams = @{ LiteralPath = $item; File = $true; ErrorAction = 'SilentlyContinue' }
-                            if ($Recurse) { $childParams['Recurse'] = $true }
+                    if (Test-Path -LiteralPath $item -PathType Container) {
+                        $childParams = @{ LiteralPath = $item; File = $true; ErrorAction = 'SilentlyContinue' }
+                        if ($Recurse) { $childParams['Recurse'] = $true }
+                        if ($Count) {
+                            $totalMatches += @(Get-ChildItem @childParams | Select-String @selectParams).Count
+                        }
+                        else {
                             Get-ChildItem @childParams | Select-String @selectParams
                         }
-                        elseif ($Recurse) {
+                    }
+                    elseif ($Recurse) {
+                        if ($Count) {
+                            $totalMatches += @(Get-ChildItem -Path $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams).Count
+                        }
+                        else {
                             Get-ChildItem -Path $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams
+                        }
+                    }
+                    else {
+                        if ($Count) {
+                            $totalMatches += @(Select-String -Path $item @selectParams).Count
                         }
                         else {
                             Select-String -Path $item @selectParams
                         }
-                    )
-                    if ($Count) {
-                        $totalMatches += $matches.Count
-                    }
-                    else {
-                        $matches
                     }
                 }
             }
@@ -239,7 +245,7 @@ function sed {
 
     begin {
         $isExprMode = $First -match '^s(.)(.+?)\1(.*?)\1([gi]*)$'
-        if (-not $isExprMode -and $First -match '^s[^A-Za-z0-9]') {
+        if (-not $isExprMode -and $First -cmatch '^s[^A-Za-z0-9]' -and -not (Test-Path -LiteralPath $First -PathType Leaf)) {
             Write-Error "Invalid sed expression syntax. Usage: sed 's/find/replace/g' [File]"
             $invalidExpr = $true
             return
@@ -288,13 +294,18 @@ function sed {
                 return
             }
             $resolvedTarget = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($targetFile)
-            $raw = [System.IO.File]::ReadAllText($resolvedTarget)
+            $raw = Get-Content -LiteralPath $resolvedTarget -Raw
             if ($null -ne $raw) {
                 $regex = [regex]::new($findPattern, $regexOptions)
                 $updated = if ($replaceAll) { $regex.Replace($raw, $replaceWith) } else { $regex.Replace($raw, $replaceWith, 1) }
                 $tempFile = Join-Path $env:TEMP ("sed-$PID-$([guid]::NewGuid().ToString('N')).tmp")
-                [System.IO.File]::WriteAllText($tempFile, $updated, [System.Text.UTF8Encoding]::new($false))
-                Move-Item -LiteralPath $tempFile -Destination $resolvedTarget -Force
+                try {
+                    Set-Content -LiteralPath $tempFile -Value $updated -NoNewline
+                    Move-Item -LiteralPath $tempFile -Destination $resolvedTarget -Force
+                }
+                finally {
+                    Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+                }
             }
         }
         else {
@@ -310,12 +321,17 @@ function sed {
                 return
             }
             $resolvedTarget = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($file)
-            $raw = [System.IO.File]::ReadAllText($resolvedTarget)
+            $raw = Get-Content -LiteralPath $resolvedTarget -Raw
             if ($null -ne $raw) {
                 $updated = $raw.Replace($find, $replace)
                 $tempFile = Join-Path $env:TEMP ("sed-$PID-$([guid]::NewGuid().ToString('N')).tmp")
-                [System.IO.File]::WriteAllText($tempFile, $updated, [System.Text.UTF8Encoding]::new($false))
-                Move-Item -LiteralPath $tempFile -Destination $resolvedTarget -Force
+                try {
+                    Set-Content -LiteralPath $tempFile -Value $updated -NoNewline
+                    Move-Item -LiteralPath $tempFile -Destination $resolvedTarget -Force
+                }
+                finally {
+                    Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     }

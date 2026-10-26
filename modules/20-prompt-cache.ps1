@@ -148,7 +148,7 @@ function Use-CachedInit {
                     }
                 }
                 if (-not [string]::IsNullOrWhiteSpace($remainder)) {
-                    $remainder.TrimStart(';')
+                    Write-Verbose "Dropping trailing PATH fragment for '$key': $remainder"
                 }
             }
             elseif ($_ -match '^function\s+(?!([Gg]lobal|[Ss]cript):)(?!__enable_)([A-Za-z0-9_-]+)') {

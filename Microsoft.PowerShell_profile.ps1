@@ -7,7 +7,11 @@
 
 function Enable-Tls12 {
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $protocol = [Net.ServicePointManager]::SecurityProtocol
+        $isSystemDefault = try { [int]$protocol -eq 0 -or $protocol -eq [Net.SecurityProtocolType]::SystemDefault } catch { [int]$protocol -eq 0 }
+        if (-not $isSystemDefault -and -not ($protocol -band [Net.SecurityProtocolType]::Tls12)) {
+            [Net.ServicePointManager]::SecurityProtocol = $protocol -bor [Net.SecurityProtocolType]::Tls12
+        }
     }
     catch {
         Write-Verbose "Unable to enable TLS 1.2 explicitly: $_"
@@ -40,7 +44,7 @@ function Get-ProfileDir {
 
 function Test-Command {
     param([Parameter(Mandatory)][string]$Name)
-    $null -ne (Get-Command -Name $Name -ErrorAction SilentlyContinue)
+    $null -ne (Get-Command -Name ([System.Management.Automation.WildcardPattern]::Escape($Name)) -ErrorAction SilentlyContinue)
 }
 
 function Save-UriToFile {
@@ -49,24 +53,43 @@ function Save-UriToFile {
         [Parameter(Mandatory)][string]$OutFile
     )
 
+    $parsedUri = [System.Uri]$Uri
+    if ($parsedUri.Scheme -ne [System.Uri]::UriSchemeHttps) {
+        throw "Only HTTPS URIs are allowed: '$Uri'"
+    }
+
+    $resolvedOutFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)
+    $outDir = Split-Path -Path $resolvedOutFile -Parent
+    if ($outDir -and -not (Test-Path -LiteralPath $outDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $outDir -Force -ErrorAction Stop | Out-Null
+    }
+
     Enable-Tls12
+    $tempFile = Join-Path $env:TEMP ("download-$PID-$([guid]::NewGuid().ToString('N')).tmp")
     $client = New-Object System.Net.WebClient
     try {
-        $client.DownloadFile($Uri, $OutFile)
+        $client.DownloadFile($parsedUri, $tempFile)
+        Move-Item -LiteralPath $tempFile -Destination $resolvedOutFile -Force -ErrorAction Stop
     }
     finally {
         $client.Dispose()
+        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
     }
 }
 
 function Get-UriContent {
     param([Parameter(Mandatory)][string]$Uri)
 
+    $parsedUri = [System.Uri]$Uri
+    if ($parsedUri.Scheme -ne [System.Uri]::UriSchemeHttps) {
+        throw "Only HTTPS URIs are allowed: '$Uri'"
+    }
+
     Enable-Tls12
     $client = New-Object System.Net.WebClient
     $client.Encoding = [System.Text.Encoding]::UTF8
     try {
-        $client.DownloadString($Uri)
+        $client.DownloadString($parsedUri)
     }
     finally {
         $client.Dispose()
@@ -78,9 +101,17 @@ function Set-PersistentEnv {
         [Parameter(Mandatory)][string]$Name,
         [AllowEmptyString()][string]$Value
     )
-    Set-Item -Path "env:$Name" -Value $Value -Force -ErrorAction Stop
-    if ([Environment]::GetEnvironmentVariable($Name, 'User') -ne $Value) {
+    if ($Name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        throw "Invalid environment variable name: '$Name'"
+    }
+
+    if ($null -eq $Value) {
+        [Environment]::SetEnvironmentVariable($Name, $null, 'User')
+        [Environment]::SetEnvironmentVariable($Name, $null, 'Process')
+    }
+    else {
         [Environment]::SetEnvironmentVariable($Name, $Value, 'User')
+        [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
     }
 }
 
@@ -109,7 +140,7 @@ if (-not $env:XDG_DATA_HOME)   { $env:XDG_DATA_HOME   = "$HOME\.local\share" }
 if (-not $env:XDG_CACHE_HOME)  { $env:XDG_CACHE_HOME  = "$HOME\.cache" }
 if (-not $env:XDG_STATE_HOME)  { $env:XDG_STATE_HOME  = "$HOME\.local\state" }
 
-if ((Test-Path -LiteralPath $env:XDG_BIN_HOME -PathType Container) -and (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME)) {
+if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
     $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
 }
 
@@ -124,7 +155,8 @@ function Initialize-XdgEnvironment {
 
     $cacheDir = Get-ProfileCacheDir
     $customDir = Get-ProfileCustomDir
-    $sentinelFile = Join-Path $cacheDir '.xdg-initialized'
+    $profileDir = Get-ProfileDir
+    $sentinelFile = Join-Path $profileDir '.xdg-initialized'
     if (-not $Force -and (Test-Path -LiteralPath $sentinelFile -PathType Leaf)) {
         return
     }
@@ -146,17 +178,47 @@ function Initialize-XdgEnvironment {
     )
 
     foreach ($dir in $directories) {
+        if ([string]::IsNullOrWhiteSpace($dir) -or -not [System.IO.Path]::IsPathRooted($dir)) {
+            Write-Warning "Skipping XDG directory with non-absolute path: '$dir'"
+            continue
+        }
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
             New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME) -and [System.IO.Path]::IsPathRooted($env:XDG_BIN_HOME)) {
+        if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
+            $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
+        }
+
+        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        if (-not $envKey) {
+            $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+        }
+        try {
+            $rawUserPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $userParts = @($rawUserPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            $expandedParts = @($userParts | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) })
+            if ($expandedParts -notcontains $env:XDG_BIN_HOME) {
+                $newPath = if ($userParts.Count -gt 0) { "$env:XDG_BIN_HOME;$rawUserPath" } else { $env:XDG_BIN_HOME }
+                $envKey.SetValue('Path', $newPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+            }
+        }
+        finally {
+            $envKey.Dispose()
         }
     }
 
     Get-Date -Format 'o' | Set-Content -LiteralPath $sentinelFile -Encoding UTF8 -ErrorAction Stop
 }
 
-# Only run one-time XDG provisioning if the sentinel file doesn't exist yet
-if (-not (Test-Path -LiteralPath (Join-Path (Get-ProfileCacheDir) '.xdg-initialized') -PathType Leaf)) {
-    Initialize-XdgEnvironment
+# Run XDG provisioning safely (it checks its own sentinel unless -Force is given)
+try {
+    Initialize-XdgEnvironment -ErrorAction Stop
+}
+catch {
+    Write-Warning "XDG environment provisioning failed: $_"
 }
 
 # ======================================================================
@@ -194,7 +256,7 @@ function Get-Theme {
 
     try {
         $Uri = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/$theme.omp.json"
-        Invoke-WebRequest -Uri $Uri -OutFile $themePath -ErrorAction Stop
+        Save-UriToFile -Uri $Uri -OutFile $themePath
         Write-Host "Downloaded Oh My Posh Theme: $theme" -ForegroundColor Green
         return $themePath
     }
@@ -286,6 +348,7 @@ function Use-CachedInit {
         $rawLines = @(& $Command)
         if ($LASTEXITCODE -ne 0 -or $rawLines.Count -eq 0) {
             Write-Warning "Failed to generate '$key' init cache (exit code: $LASTEXITCODE)."
+            Remove-Item -LiteralPath $cacheFile -Force -ErrorAction SilentlyContinue
             return
         }
 
@@ -296,15 +359,19 @@ function Use-CachedInit {
         ) | ForEach-Object { $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
         $transformedLines = $rawLines | ForEach-Object {
-            if ($_ -match '^\$Env:PATH\s*=\s*[''"]([^''"]+)[''"]') {
+            if ($_ -match '^\$Env:PATH\s*=\s*[''"]([^''"]+)[''"](.*)$') {
                 # Convert static PATH snapshot into non-destructive dynamic prepend against persistent Machine/User PATH
                 $capturedPaths = $Matches[1] -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                $remainder = $Matches[2]
                 $addedPaths = @($capturedPaths | Where-Object { $baselinePaths -notcontains $_ })
                 if ($addedPaths.Count -gt 0) {
                     foreach ($p in $addedPaths) {
                         $escapedPath = $p -replace "'", "''"
                         "if ((Test-Path -LiteralPath '$escapedPath' -PathType Container) -and ((`$env:PATH -split ';') -notcontains '$escapedPath')) { `$env:PATH = '$escapedPath;' + `$env:PATH }"
                     }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($remainder)) {
+                    Write-Verbose "Dropping trailing PATH fragment for '$key': $remainder"
                 }
             }
             elseif ($_ -match '^function\s+(?!([Gg]lobal|[Ss]cript):)(?!__enable_)([A-Za-z0-9_-]+)') {
@@ -326,21 +393,25 @@ function Use-CachedInit {
         foreach ($__v in (Get-Variable -Scope Local)) {
             $__existingVars[$__v.Name] = $true
         }
+        $__existingAliases = @{}
+        foreach ($__a in (Get-Alias)) {
+            $__existingAliases[$__a.Name] = $true
+        }
 
         . $cacheFile
 
         foreach ($__v in (Get-Variable -Scope Local)) {
-            if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -ne '__existingVars') {
+            if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -notmatch '^__') {
                 Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
             }
         }
         foreach ($__fn in (Get-ChildItem -Path Function:\)) {
-            if ($__fn.Name -notin @('Use-CachedInit', 'prompt') -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File -eq $cacheFile) {
+            if ($__fn.Name -notin @('Use-CachedInit', 'prompt') -and $__fn.Name -notmatch '^__enable_' -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File -eq $cacheFile) {
                 Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
             }
         }
         foreach ($__al in (Get-Alias)) {
-            if ($__al.Options -notmatch 'ReadOnly|Constant') {
+            if (-not $__existingAliases.ContainsKey($__al.Name) -and $__al.Options -notmatch 'ReadOnly|Constant') {
                 Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
             }
         }
@@ -374,8 +445,12 @@ function Update-InitCache {
             else {
                 $ompScript = $ompLines -join "`n"
 
+                $oldOmpScript = $ompScript
                 # 1. Give each terminal session a unique POSH_SESSION_ID instead of a static cached GUID
                 $ompScript = $ompScript -replace '(?m)^\$env:POSH_SESSION_ID\s*=\s*"[^"]+"', '$env:POSH_SESSION_ID = [guid]::NewGuid().ToString()'
+                if ($ompScript -eq $oldOmpScript) {
+                    Write-Verbose 'POSH_SESSION_ID assignment pattern was not found in oh-my-posh output.'
+                }
 
                 # 2. Pre-compute the secondary continuation prompt so startup doesn't spawn oh-my-posh.exe synchronously (~380ms saved)
                 $secondaryLines = & oh-my-posh print secondary --config $theme --shell=pwsh
@@ -492,13 +567,27 @@ function Set-PSReadLineOptionsCompat {
     param([Parameter(Mandatory)][hashtable]$Options)
 
     $safeOptions = $Options.Clone()
-    if ($PSVersionTable.PSEdition -ne 'Core') {
+    $psrl = Get-Module -Name PSReadLine
+    if (-not $psrl) {
+        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+    }
+    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
+
+    if ($psrlVersion -lt [version]'2.0.0') {
         $safeOptions.Remove('PredictionSource')
+        $safeOptions.Remove('Colors')
+    }
+    if ($psrlVersion -lt [version]'2.1.0') {
         $safeOptions.Remove('PredictionViewStyle')
     }
 
     if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set PSReadLine options')) {
-        Set-PSReadLineOption @safeOptions
+        try {
+            Set-PSReadLineOption @safeOptions
+        }
+        catch {
+            Write-Verbose "Unable to set all PSReadLine options: $_"
+        }
     }
 }
 
@@ -506,12 +595,28 @@ function Set-PredictionSource {
     [CmdletBinding(SupportsShouldProcess)]
     param()
 
+    $psrl = Get-Module -Name PSReadLine
+    if (-not $psrl) {
+        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+    }
+    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
+
     if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set prediction source')) {
-        if ($PSVersionTable.PSEdition -eq 'Core') {
-            Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+        if ($psrlVersion -ge [version]'2.1.0' -and $PSVersionTable.PSEdition -eq 'Core') {
+            try {
+                Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+            }
+            catch {
+                Write-Verbose "Unable to set PredictionSource to HistoryAndPlugin: $_"
+            }
         }
 
-        Set-PSReadLineOption -MaximumHistoryCount 10000
+        try {
+            Set-PSReadLineOption -MaximumHistoryCount 10000
+        }
+        catch {
+            Write-Verbose "Unable to set MaximumHistoryCount: $_"
+        }
     }
 }
 
@@ -519,6 +624,12 @@ function Initialize-PSReadLine {
     if (-not (IsInteractiveShell)) {
         return
     }
+
+    $psrl = Get-Module -Name PSReadLine
+    if (-not $psrl) {
+        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+    }
+    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
 
     $options = @{
         EditMode                      = 'Windows'
@@ -542,20 +653,40 @@ function Initialize-PSReadLine {
     }
 
     Set-PSReadLineOptionsCompat -Options $options
-    Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
-    Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
-    Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+d' -Function DeleteChar
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+w' -Function BackwardDeleteWord
-    Set-PSReadLineKeyHandler -Chord 'Alt+d' -Function DeleteWord
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+LeftArrow' -Function BackwardWord
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+RightArrow' -Function ForwardWord
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+z' -Function Undo
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+y' -Function Redo
 
-    Set-PSReadLineOption -AddToHistoryHandler {
-        param([string]$line)
-        $line -notmatch '(?i)(password|secret|token|apikey|connectionstring)'
+    $keyBindings = @(
+        @{ Key = 'UpArrow'; Function = 'HistorySearchBackward' },
+        @{ Key = 'DownArrow'; Function = 'HistorySearchForward' },
+        @{ Key = 'Tab'; Function = 'MenuComplete' },
+        @{ Chord = 'Ctrl+d'; Function = 'DeleteChar' },
+        @{ Chord = 'Ctrl+w'; Function = 'BackwardDeleteWord' },
+        @{ Chord = 'Alt+d'; Function = 'DeleteWord' },
+        @{ Chord = 'Ctrl+LeftArrow'; Function = 'BackwardWord' },
+        @{ Chord = 'Ctrl+RightArrow'; Function = 'ForwardWord' },
+        @{ Chord = 'Ctrl+z'; Function = 'Undo' },
+        @{ Chord = 'Ctrl+y'; Function = 'Redo' }
+    )
+
+    foreach ($kb in $keyBindings) {
+        try {
+            Set-PSReadLineKeyHandler @kb -ErrorAction SilentlyContinue
+        }
+        catch {
+            Write-Verbose "Failed to bind PSReadLine key: $_"
+        }
+    }
+
+    if ($psrlVersion -ge [version]'2.0.0') {
+        try {
+            Set-PSReadLineOption -AddToHistoryHandler {
+                param([string]$line)
+                $normalized = $line -replace '[-_ ]', ''
+                $normalized -notmatch '(?i)(password|passwd|pwd|secret|token|apikey|connectionstring|credential)'
+            }
+        }
+        catch {
+            Write-Verbose "Unable to set AddToHistoryHandler: $_"
+        }
     }
 
     Set-PredictionSource
@@ -572,26 +703,34 @@ function Register-CustomCompletion {
         deno = @('run', 'compile', 'bundle', 'test', 'lint', 'fmt', 'cache', 'info', 'doc', 'upgrade')
     }
 
-    Register-ArgumentCompleter -Native -CommandName git, npm, deno -ScriptBlock {
-        param($wordToComplete, $commandAst, $cursorPosition)
-        $null = $cursorPosition
-        $completionWord = $wordToComplete
-        $map = $completionMap
-        $command = [System.IO.Path]::GetFileNameWithoutExtension($commandAst.CommandElements[0].Value)
-        if ($map.ContainsKey($command)) {
-            $map[$command] |
-            Where-Object { $_ -like "$completionWord*" } |
-            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
-        }
-    }.GetNewClosure()
+    $nativeParams = if ($PSVersionTable.PSEdition -eq 'Core') { @{ Native = $true } } else { @{} }
 
-    Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock {
-        param($wordToComplete, $commandAst, $cursorPosition)
-        $null = $wordToComplete
-        if (Get-Command -Name dotnet -ErrorAction SilentlyContinue) {
-            dotnet complete --position $cursorPosition $commandAst.ToString() |
-            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    try {
+        Register-ArgumentCompleter @nativeParams -CommandName git, npm, deno -ScriptBlock {
+            param($wordToComplete, $commandAst, $cursorPosition)
+            $null = $cursorPosition
+            $completionWord = $wordToComplete
+            $map = $completionMap
+            $command = [System.IO.Path]::GetFileNameWithoutExtension($commandAst.CommandElements[0].Value)
+            if ($map.ContainsKey($command)) {
+                $pattern = [System.Management.Automation.WildcardPattern]::Escape($completionWord) + '*'
+                $map[$command] |
+                    Where-Object { $_ -like $pattern } |
+                    ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+            }
+        }.GetNewClosure()
+
+        Register-ArgumentCompleter @nativeParams -CommandName dotnet -ScriptBlock {
+            param($wordToComplete, $commandAst, $cursorPosition)
+            $null = $wordToComplete
+            if (Get-Command -Name dotnet -ErrorAction SilentlyContinue) {
+                dotnet complete --position $cursorPosition $commandAst.ToString() |
+                    ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+            }
         }
+    }
+    catch {
+        Write-Verbose "Unable to register argument completers: $_"
     }
 }
 
@@ -600,13 +739,18 @@ function Initialize-OptionalModule {
         return
     }
 
+    if ($global:__terminalIconsScheduled) {
+        return
+    }
+    $global:__terminalIconsScheduled = $true
+
     # Defer heavy Terminal-Icons module import to OnIdle so prompt renders immediately
     Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -Action {
         try {
             Import-Module -Name Terminal-Icons -Global -ErrorAction Stop
         }
         catch {
-            Write-Verbose "Terminal-Icons module is not installed: $_"
+            Write-Warning "Failed to load Terminal-Icons module: $_"
         }
     } | Out-Null
 }
@@ -658,11 +802,21 @@ function pubip {
 }
 
 function winutil {
-    & ([ScriptBlock]::Create((Invoke-RestMethod -Uri 'https://christitus.com/win'))) @args
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(ValueFromRemainingArguments)][object[]]$Rest)
+    if ($PSCmdlet.ShouldProcess('https://christitus.com/win', 'Download and run Chris Titus WinUtil script')) {
+        $scriptText = Get-UriContent -Uri 'https://christitus.com/win'
+        & ([ScriptBlock]::Create($scriptText)) @Rest
+    }
 }
 
 function winutildev {
-    & ([ScriptBlock]::Create((Invoke-RestMethod -Uri 'https://christitus.com/windev'))) @args
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(ValueFromRemainingArguments)][object[]]$Rest)
+    if ($PSCmdlet.ShouldProcess('https://christitus.com/windev', 'Download and run Chris Titus WinUtil Dev script')) {
+        $scriptText = Get-UriContent -Uri 'https://christitus.com/windev'
+        & ([ScriptBlock]::Create($scriptText)) @Rest
+    }
 }
 
 function windev {
@@ -702,7 +856,13 @@ function admin {
     $cwd = (Get-Location).ProviderPath
     $quotedCwd = '"' + $cwd + '"'
     $shell = if (Test-Command pwsh) { 'pwsh.exe' } else { 'powershell.exe' }
-    $shellArgs = if ($args.Count -gt 0) { @('-NoExit', '-Command', ('"' + (($args -join ' ') -replace '"', '\"') + '"')) } else { @('-NoExit') }
+    $shellArgs = if ($args.Count -gt 0) {
+        $command = $args -join ' '
+        @('-NoExit', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)))
+    }
+    else {
+        @('-NoExit')
+    }
 
     if (Test-Command wt) {
         Start-Process wt -Verb RunAs -ArgumentList (@('-d', $quotedCwd, $shell) + $shellArgs)
@@ -749,7 +909,8 @@ function grep {
         [Parameter(Position = 1, ValueFromRemainingArguments)][string[]]$Path,
         [Parameter(ValueFromPipeline)][object]$InputObject,
         [Alias('i')][switch]$IgnoreCase,
-        [Alias('c')][switch]$CaseSensitive,
+        [switch]$CaseSensitive,
+        [Alias('c')][switch]$Count,
         [Alias('v')][switch]$InvertMatch,
         [Alias('r')][switch]$Recurse
     )
@@ -761,12 +922,18 @@ function grep {
             NotMatch      = [bool]$InvertMatch
         }
         $hasPipeline = $MyInvocation.ExpectingInput
+        $totalMatches = 0
     }
 
     process {
         if ($PSBoundParameters.ContainsKey('InputObject') -and $null -ne $InputObject) {
             $hasPipeline = $true
-            $InputObject | Select-String @selectParams
+            if ($Count) {
+                $totalMatches += @($InputObject | Select-String @selectParams).Count
+            }
+            else {
+                $InputObject | Select-String @selectParams
+            }
         }
     }
 
@@ -775,19 +942,40 @@ function grep {
             if ($Path -and $Path.Count -gt 0) {
                 foreach ($item in $Path) {
                     if (Test-Path -LiteralPath $item -PathType Container) {
-                        Get-ChildItem -LiteralPath $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams
+                        $childParams = @{ LiteralPath = $item; File = $true; ErrorAction = 'SilentlyContinue' }
+                        if ($Recurse) { $childParams['Recurse'] = $true }
+                        if ($Count) {
+                            $totalMatches += @(Get-ChildItem @childParams | Select-String @selectParams).Count
+                        }
+                        else {
+                            Get-ChildItem @childParams | Select-String @selectParams
+                        }
                     }
                     elseif ($Recurse) {
-                        Get-ChildItem -Path $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams
+                        if ($Count) {
+                            $totalMatches += @(Get-ChildItem -Path $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams).Count
+                        }
+                        else {
+                            Get-ChildItem -Path $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams
+                        }
                     }
                     else {
-                        Select-String -Path $item @selectParams
+                        if ($Count) {
+                            $totalMatches += @(Select-String -Path $item @selectParams).Count
+                        }
+                        else {
+                            Select-String -Path $item @selectParams
+                        }
                     }
                 }
             }
             else {
                 Write-Error 'Usage: grep [-i] [-c] [-v] [-r] <pattern> [path...] or pipe input to grep'
+                return
             }
+        }
+        if ($Count) {
+            $totalMatches
         }
     }
 }
@@ -814,6 +1002,11 @@ function sed {
 
     begin {
         $isExprMode = $First -match '^s(.)(.+?)\1(.*?)\1([gi]*)$'
+        if (-not $isExprMode -and $First -cmatch '^s[^A-Za-z0-9]' -and -not (Test-Path -LiteralPath $First -PathType Leaf)) {
+            Write-Error "Invalid sed expression syntax. Usage: sed 's/find/replace/g' [File]"
+            $invalidExpr = $true
+            return
+        }
         if ($isExprMode) {
             $findPattern = $Matches[2]
             $replaceWith = $Matches[3]
@@ -826,6 +1019,7 @@ function sed {
     }
 
     process {
+        if ($invalidExpr) { return }
         if ($PSBoundParameters.ContainsKey('InputObject')) {
             $hasPipeline = $true
             if ($null -eq $InputObject) {
@@ -847,7 +1041,7 @@ function sed {
     }
 
     end {
-        if ($hasPipeline) {
+        if ($invalidExpr -or $hasPipeline) {
             return
         }
 
@@ -856,11 +1050,19 @@ function sed {
                 Write-Error "File not found: $targetFile"
                 return
             }
-            $raw = Get-Content -LiteralPath $targetFile -Raw
+            $resolvedTarget = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($targetFile)
+            $raw = Get-Content -LiteralPath $resolvedTarget -Raw
             if ($null -ne $raw) {
                 $regex = [regex]::new($findPattern, $regexOptions)
                 $updated = if ($replaceAll) { $regex.Replace($raw, $replaceWith) } else { $regex.Replace($raw, $replaceWith, 1) }
-                Set-Content -LiteralPath $targetFile -Value $updated -NoNewline
+                $tempFile = Join-Path $env:TEMP ("sed-$PID-$([guid]::NewGuid().ToString('N')).tmp")
+                try {
+                    Set-Content -LiteralPath $tempFile -Value $updated -NoNewline
+                    Move-Item -LiteralPath $tempFile -Destination $resolvedTarget -Force
+                }
+                finally {
+                    Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+                }
             }
         }
         else {
@@ -875,9 +1077,18 @@ function sed {
                 Write-Error "File not found: $file"
                 return
             }
-            $raw = Get-Content -LiteralPath $file -Raw
+            $resolvedTarget = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($file)
+            $raw = Get-Content -LiteralPath $resolvedTarget -Raw
             if ($null -ne $raw) {
-                Set-Content -LiteralPath $file -Value $raw.Replace($find, $replace) -NoNewline
+                $updated = $raw.Replace($find, $replace)
+                $tempFile = Join-Path $env:TEMP ("sed-$PID-$([guid]::NewGuid().ToString('N')).tmp")
+                try {
+                    Set-Content -LiteralPath $tempFile -Value $updated -NoNewline
+                    Move-Item -LiteralPath $tempFile -Destination $resolvedTarget -Force
+                }
+                finally {
+                    Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     }
@@ -941,11 +1152,15 @@ function export {
     if ($Arguments.Count -eq 2 -and $Arguments[0] -notmatch '=' -and $Arguments[1] -notmatch '=') {
         $key = $Arguments[0]
         $val = $Arguments[1]
+        if ($key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+            Write-Error "Invalid environment variable name: '$key'"
+            return
+        }
         if ($Persist) {
             Set-PersistentEnv -Name $key -Value $val
         }
         else {
-            Set-Item -Path "env:$key" -Value $val -Force
+            [Environment]::SetEnvironmentVariable($key, $val, 'Process')
         }
         return
     }
@@ -971,20 +1186,28 @@ function export {
             if ($val.Length -ge 2 -and (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'")))) {
                 $val = $val.Substring(1, $val.Length - 2)
             }
+            if ($key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                Write-Error "Invalid environment variable name: '$key'"
+                continue
+            }
             if ($Persist) {
                 Set-PersistentEnv -Name $key -Value $val
             }
             else {
-                Set-Item -Path "env:$key" -Value $val -Force
+                [Environment]::SetEnvironmentVariable($key, $val, 'Process')
             }
         }
         else {
+            if ($arg -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                Write-Error "Invalid environment variable name: '$arg'"
+                continue
+            }
             $existing = [Environment]::GetEnvironmentVariable($arg, 'Process')
             if ($null -ne $existing -and $Persist) {
                 Set-PersistentEnv -Name $arg -Value $existing
             }
             elseif ($null -eq $existing) {
-                Set-Item -Path "env:$arg" -Value '' -Force
+                [Environment]::SetEnvironmentVariable($arg, '', 'Process')
             }
         }
     }
@@ -1003,7 +1226,11 @@ function unset {
     )
 
     foreach ($varName in $Name) {
-        Remove-Item -Path "env:$varName" -ErrorAction SilentlyContinue
+        if ($varName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+            Write-Warning "Skipping invalid environment variable name: '$varName'"
+            continue
+        }
+        [Environment]::SetEnvironmentVariable($varName, $null, 'Process')
         if ($Persist) {
             [Environment]::SetEnvironmentVariable($varName, $null, 'User')
         }
@@ -1030,7 +1257,7 @@ function printenv {
         Get-ChildItem Env: | Sort-Object Name | ForEach-Object {
             $entry = "$($_.Name)=$($_.Value)"
             if ($NullTerminated) {
-                Write-Host -NoNewline "$entry$terminator"
+                [Console]::Out.Write("$entry$terminator")
             }
             else {
                 $entry
@@ -1044,7 +1271,7 @@ function printenv {
         $item = Get-Item -LiteralPath "Env:$varName" -ErrorAction SilentlyContinue
         if ($null -ne $item) {
             if ($NullTerminated) {
-                Write-Host -NoNewline "$($item.Value)$terminator"
+                [Console]::Out.Write("$($item.Value)$terminator")
             }
             else {
                 $item.Value
@@ -1059,15 +1286,29 @@ function printenv {
 }
 
 function pkill {
+    [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory, Position = 0)][string]$Name)
     $cleanName = $Name -replace '\.exe$', ''
-    Get-Process -Name $cleanName -ErrorAction SilentlyContinue | Stop-Process -Force
+    if ($cleanName -notmatch '^[A-Za-z0-9_.-]+$') {
+        Write-Error "Invalid process name: '$Name'"
+        return
+    }
+    $procs = @(Get-Process | Where-Object { $_.ProcessName -eq $cleanName })
+    foreach ($proc in $procs) {
+        if ($PSCmdlet.ShouldProcess("$($proc.ProcessName) (PID: $($proc.Id))", 'Stop process')) {
+            $proc | Stop-Process -Force
+        }
+    }
 }
 
 function pgrep {
     param([Parameter(Mandatory, Position = 0)][string]$Name)
     $cleanName = $Name -replace '\.exe$', ''
-    Get-Process -Name $cleanName -ErrorAction SilentlyContinue
+    if ($cleanName -notmatch '^[A-Za-z0-9_.-]+$') {
+        Write-Error "Invalid process name: '$Name'"
+        return
+    }
+    Get-Process | Where-Object { $_.ProcessName -eq $cleanName }
 }
 
 function head {
@@ -1149,7 +1390,7 @@ function trash {
     .SYNOPSIS
         Safely moves files or directories (including hidden files and wildcards) to the Windows Recycle Bin.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ValueFromRemainingArguments)]
         [Alias('FullName', 'LiteralPath')]
@@ -1179,24 +1420,26 @@ function trash {
 
             foreach ($item in $items) {
                 $fullPath = $item.FullName
-                try {
-                    if ($item.PSIsContainer) {
-                        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
-                            $fullPath,
-                            [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-                            [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-                        )
+                if ($PSCmdlet.ShouldProcess($fullPath, 'Move to Recycle Bin')) {
+                    try {
+                        if ($item.PSIsContainer) {
+                            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
+                                $fullPath,
+                                [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                                [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+                            )
+                        }
+                        else {
+                            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
+                                $fullPath,
+                                [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                                [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+                            )
+                        }
                     }
-                    else {
-                        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
-                            $fullPath,
-                            [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-                            [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-                        )
+                    catch {
+                        Write-Error "Could not move '$fullPath' to Recycle Bin: $_"
                     }
-                }
-                catch {
-                    Write-Error "Could not move '$fullPath' to Recycle Bin: $_"
                 }
             }
         }
@@ -1212,8 +1455,8 @@ function dtop {
 }
 
 function k9 { param([Parameter(Mandatory)][string]$Name) pkill $Name }
-function la { Get-ChildItem @args | Format-Table -AutoSize }
-function ll { Get-ChildItem -Force @args | Format-Table -AutoSize }
+function la { Get-ChildItem @args }
+function ll { Get-ChildItem -Force @args }
 
 function sysinfo { Get-ComputerInfo }
 
@@ -1229,8 +1472,6 @@ function pst { Get-Clipboard }
 # Module 50: Profile Updater, Maintenance & Startup Orchestration
 # ======================================================================
 
-$repo_root = 'https://raw.githubusercontent.com/luzede'
-
 function Update-Profile {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -1238,12 +1479,20 @@ function Update-Profile {
         [switch]$PassThru
     )
 
-    $url = "$repo_root/powershell-profile/main/Microsoft.PowerShell_profile.ps1"
+    $url = 'https://raw.githubusercontent.com/luzede/powershell-profile/main/Microsoft.PowerShell_profile.ps1'
     $target = $PROFILE.CurrentUserCurrentHost
     $tempFile = Join-Path $env:TEMP "Microsoft.PowerShell_profile-$PID-$([guid]::NewGuid().ToString('N')).ps1"
+    $updated = $false
 
     try {
         Save-UriToFile -Uri $url -OutFile $tempFile
+
+        $parseErrors = $null
+        $tokens = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($tempFile, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors -and $parseErrors.Count -gt 0) {
+            throw "Downloaded profile has syntax errors: $($parseErrors[0].Message)"
+        }
 
         $targetExists = Test-Path -LiteralPath $target -PathType Leaf
         $oldHash = if ($targetExists) { (Get-FileHash -LiteralPath $target -ErrorAction Stop).Hash } else { $null }
@@ -1263,12 +1512,19 @@ function Update-Profile {
                 New-Item -Path $targetDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
             }
 
-            Copy-Item -LiteralPath $tempFile -Destination $target -Force -ErrorAction Stop
+            if ($targetExists) {
+                $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+                $backupPath = Join-Path $targetDir "oldprofile-$timestamp.ps1"
+                Copy-Item -LiteralPath $target -Destination $backupPath -Force -ErrorAction Stop
+            }
+
+            Move-Item -LiteralPath $tempFile -Destination $target -Force -ErrorAction Stop
+            $updated = $true
             Clear-InitCache
             Write-Host 'Profile has been updated. Restart your shell to use the new version.' -ForegroundColor Magenta
         }
 
-        if ($PassThru) { return $true }
+        if ($PassThru) { return $updated }
     }
     catch {
         Write-Warning "Unable to check for profile updates: $_"
@@ -1301,7 +1557,7 @@ function Update-PowerShell {
         if ($PSCmdlet.ShouldProcess("PowerShell $currentVersion", "Upgrade to $latestVersion")) {
             winget upgrade --id Microsoft.PowerShell --exact --accept-source-agreements --accept-package-agreements
             if ($LASTEXITCODE -ne 0) {
-                Write-Error "winget failed to update PowerShell. Exit code: $LASTEXITCODE"
+                Write-Warning "winget failed to update PowerShell. Exit code: $LASTEXITCODE"
                 return
             }
             Write-Host 'PowerShell has been updated. Restart your shell to use the new version.' -ForegroundColor Magenta
@@ -1316,16 +1572,19 @@ function Clear-Cache {
     [CmdletBinding(SupportsShouldProcess)]
     param()
 
-    $paths = @(
-        "$env:SystemRoot\Prefetch\*",
-        "$env:SystemRoot\Temp\*",
-        "$env:TEMP\*",
-        "$env:LOCALAPPDATA\Microsoft\Windows\INetCache\*"
+    $patterns = @(
+        if ($env:SystemRoot) { Join-Path $env:SystemRoot 'Prefetch\*' }
+        if ($env:SystemRoot) { Join-Path $env:SystemRoot 'Temp\*' }
+        if ($env:TEMP)       { Join-Path $env:TEMP '*' }
+        if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\INetCache\*' }
     )
 
-    foreach ($path in $paths) {
-        if ($PSCmdlet.ShouldProcess($path, 'Remove cached files')) {
-            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($pattern in $patterns) {
+        $items = @(Get-Item -Path $pattern -Force -ErrorAction SilentlyContinue)
+        foreach ($item in $items) {
+            if ($PSCmdlet.ShouldProcess($item.FullName, 'Remove cached file')) {
+                Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
@@ -1382,7 +1641,12 @@ function Initialize-CustomProfile {
     $customDir = Get-ProfileCustomDir
     if (Test-Path -LiteralPath $customDir -PathType Container) {
         foreach ($customFile in (Get-ChildItem -LiteralPath $customDir -Filter '*.ps1' -File | Sort-Object Name)) {
-            . $customFile.FullName
+            try {
+                . $customFile.FullName
+            }
+            catch {
+                Write-Warning "Error loading custom profile script '$($customFile.Name)': $_"
+            }
         }
     }
 }

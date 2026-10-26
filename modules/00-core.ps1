@@ -5,7 +5,8 @@
 function Enable-Tls12 {
     try {
         $protocol = [Net.ServicePointManager]::SecurityProtocol
-        if ($protocol -ne [Net.SecurityProtocolType]::SystemDefault -and -not ($protocol -band [Net.SecurityProtocolType]::Tls12)) {
+        $isSystemDefault = try { [int]$protocol -eq 0 -or $protocol -eq [Net.SecurityProtocolType]::SystemDefault } catch { [int]$protocol -eq 0 }
+        if (-not $isSystemDefault -and -not ($protocol -band [Net.SecurityProtocolType]::Tls12)) {
             [Net.ServicePointManager]::SecurityProtocol = $protocol -bor [Net.SecurityProtocolType]::Tls12
         }
     }
@@ -101,7 +102,7 @@ function Set-PersistentEnv {
         throw "Invalid environment variable name: '$Name'"
     }
 
-    if ([string]::IsNullOrEmpty($Value)) {
+    if ($null -eq $Value) {
         [Environment]::SetEnvironmentVariable($Name, $null, 'User')
         [Environment]::SetEnvironmentVariable($Name, $null, 'Process')
     }

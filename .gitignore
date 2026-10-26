@@ -14,7 +14,10 @@
 *.pfx
 *.p12
 *.crt
-id_rsa
+id_*
+!id_*.pub
+*.ppk
+*.keystore
 credentials.json
 .npmrc
 

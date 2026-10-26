@@ -57,4 +57,3 @@ body:
     attributes:
       label: Logs or screenshots
       description: Paste relevant errors or add screenshots. Remove access tokens, secrets, credentials, and private paths before posting.
-      render: shell

@@ -56,15 +56,26 @@ function Initialize-XdgEnvironment {
         }
     }
 
-    if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
-        $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
-    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME) -and [System.IO.Path]::IsPathRooted($env:XDG_BIN_HOME)) {
+        if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
+            $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
+        }
 
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if ($userPath) {
-        $userParts = $userPath -split ';'
-        if ($userParts -notcontains $env:XDG_BIN_HOME) {
-            [Environment]::SetEnvironmentVariable('Path', "$env:XDG_BIN_HOME;$userPath", 'User')
+        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        if (-not $envKey) {
+            $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+        }
+        try {
+            $rawUserPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $userParts = @($rawUserPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            $expandedParts = @($userParts | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) })
+            if ($expandedParts -notcontains $env:XDG_BIN_HOME) {
+                $newPath = if ($userParts.Count -gt 0) { "$env:XDG_BIN_HOME;$rawUserPath" } else { $env:XDG_BIN_HOME }
+                $envKey.SetValue('Path', $newPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+            }
+        }
+        finally {
+            $envKey.Dispose()
         }
     }
 

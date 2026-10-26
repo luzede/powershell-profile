@@ -40,7 +40,7 @@ if ($parseErrors -and $parseErrors.Count -gt 0) {
     throw "Bundled profile contains syntax errors: $($parseErrors[0].Message) at line $($parseErrors[0].Extent.StartLineNumber)"
 }
 
-$bundledContent | Set-Content -LiteralPath $bundledPath -Encoding UTF8 -NoNewline
+[System.IO.File]::WriteAllText($bundledPath, $bundledContent, [System.Text.UTF8Encoding]::new($false))
 Write-Host "Bundled $($moduleFiles.Count) modules into [$bundledPath]." -ForegroundColor Cyan
 
 # 2. Ensure git pre-commit hook is configured
