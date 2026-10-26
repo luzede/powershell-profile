@@ -11,7 +11,7 @@ The profile is organized into modular components under [`modules/`](modules) and
 - [`modules/20-prompt-cache.ps1`](modules/20-prompt-cache.ps1) — Theme management (`Get-Theme`, `Set-Theme`), cached initialization for `oh-my-posh` and `zoxide`, and the generic `Use-CachedInit` helper (`Update-InitCache`, `Clear-InitCache`).
 - [`modules/30-readline.ps1`](modules/30-readline.ps1) — `PSReadLine` colors, keybinds, predictions, sensitive history filtering, custom completions, and deferred `OnIdle` loading for `Terminal-Icons`.
 - [`modules/40-linux-utils.ps1`](modules/40-linux-utils.ps1) — Linux/POSIX utilities (`export`, `unset`, `printenv`, `grep`, `sed`, `head`, `tail`, `which`, `touch`, `trash`, etc.) and system shortcuts (`admin`, `winutil`, `winutildev`, `windev`, etc.).
-- [`modules/50-updater.ps1`](modules/50-updater.ps1) — Non-blocking `OnIdle` scheduled profile updates, `Update-PowerShell`, `Clear-Cache`, `Show-Help`, user `Custom/*.ps1` drop-in loading, and startup orchestration.
+- [`modules/50-updater.ps1`](modules/50-updater.ps1) — Manual profile updater (`Update-Profile`), `Update-PowerShell`, `Clear-Cache`, `Show-Help`, user `Custom/*.ps1` drop-in loading, and startup orchestration.
 
 ### Local Development & Pre-Commit Hook
 A Git `pre-commit` hook in [`.githooks/pre-commit`](.githooks/pre-commit) automatically bundles `modules/*.ps1` into `Microsoft.PowerShell_profile.ps1` and stages it whenever you run `git commit`.

@@ -3,38 +3,6 @@
 # ======================================================================
 
 $repo_root = 'https://raw.githubusercontent.com/luzede'
-$timeFilePath = Join-Path (Get-ProfileCacheDir) 'LastExecutionTime.txt'
-$updateInterval = 7
-
-function Test-ProfileUpdateDue {
-    param(
-        [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][int]$IntervalDays
-    )
-
-    if ($IntervalDays -lt 0 -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $true
-    }
-
-    $rawDate = [string](Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue)
-    if ([string]::IsNullOrWhiteSpace($rawDate)) {
-        return $true
-    }
-    $rawDate = $rawDate.Trim()
-
-    $lastRun = [datetime]::MinValue
-    if (-not [datetime]::TryParseExact(
-            $rawDate,
-            'yyyy-MM-dd',
-            [Globalization.CultureInfo]::InvariantCulture,
-            [Globalization.DateTimeStyles]::None,
-            [ref]$lastRun
-        )) {
-        return $true
-    }
-
-    return ((Get-Date).Date - $lastRun.Date).TotalDays -ge $IntervalDays
-}
 
 function Update-Profile {
     [CmdletBinding(SupportsShouldProcess)]
@@ -82,28 +50,6 @@ function Update-Profile {
     finally {
         Remove-Item -LiteralPath $tempFile -ErrorAction SilentlyContinue
     }
-}
-
-function Invoke-ScheduledProfileUpdate {
-    if (-not (IsInteractiveShell) -or
-        -not (Test-ProfileUpdateDue -Path $timeFilePath -IntervalDays $updateInterval)) {
-        return
-    }
-
-    # Defer network update check to OnIdle so it never blocks terminal startup
-    Get-EventSubscriber -SourceIdentifier PowerShell.OnIdle -ErrorAction SilentlyContinue |
-        Where-Object { $_.Action -and $_.Action.ToString() -match 'Update-Profile' } |
-        Unregister-Event -ErrorAction SilentlyContinue
-    Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -MessageData $timeFilePath -Action {
-        $stampPath = $Event.MessageData
-        if (Update-Profile -PassThru) {
-            $timeDir = Split-Path -Path $stampPath -Parent
-            if (-not (Test-Path -LiteralPath $timeDir -PathType Container)) {
-                New-Item -Path $timeDir -ItemType Directory -Force | Out-Null
-            }
-            Get-Date -Format 'yyyy-MM-dd' | Set-Content -LiteralPath $stampPath
-        }
-    } | Out-Null
 }
 
 function Update-PowerShell {
@@ -219,7 +165,6 @@ Register-CustomCompletion
 . Initialize-PromptTool
 . Initialize-CustomProfile
 Initialize-OptionalModule
-Invoke-ScheduledProfileUpdate
 
 if (IsInteractiveShell) {
     Write-Host "Use 'Show-Help' to display help" -ForegroundColor Yellow
