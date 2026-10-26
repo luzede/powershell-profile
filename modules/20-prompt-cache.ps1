@@ -33,7 +33,7 @@ function Get-Theme {
 
     try {
         $Uri = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/$theme.omp.json"
-        Invoke-WebRequest -Uri $Uri -OutFile $themePath -ErrorAction Stop
+        Save-UriToFile -Uri $Uri -OutFile $themePath
         Write-Host "Downloaded Oh My Posh Theme: $theme" -ForegroundColor Green
         return $themePath
     }
@@ -125,6 +125,7 @@ function Use-CachedInit {
         $rawLines = @(& $Command)
         if ($LASTEXITCODE -ne 0 -or $rawLines.Count -eq 0) {
             Write-Warning "Failed to generate '$key' init cache (exit code: $LASTEXITCODE)."
+            Remove-Item -LiteralPath $cacheFile -Force -ErrorAction SilentlyContinue
             return
         }
 
@@ -135,15 +136,19 @@ function Use-CachedInit {
         ) | ForEach-Object { $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
         $transformedLines = $rawLines | ForEach-Object {
-            if ($_ -match '^\$Env:PATH\s*=\s*[''"]([^''"]+)[''"]') {
+            if ($_ -match '^\$Env:PATH\s*=\s*[''"]([^''"]+)[''"](.*)$') {
                 # Convert static PATH snapshot into non-destructive dynamic prepend against persistent Machine/User PATH
                 $capturedPaths = $Matches[1] -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                $remainder = $Matches[2]
                 $addedPaths = @($capturedPaths | Where-Object { $baselinePaths -notcontains $_ })
                 if ($addedPaths.Count -gt 0) {
                     foreach ($p in $addedPaths) {
                         $escapedPath = $p -replace "'", "''"
                         "if ((Test-Path -LiteralPath '$escapedPath' -PathType Container) -and ((`$env:PATH -split ';') -notcontains '$escapedPath')) { `$env:PATH = '$escapedPath;' + `$env:PATH }"
                     }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($remainder)) {
+                    $remainder.TrimStart(';')
                 }
             }
             elseif ($_ -match '^function\s+(?!([Gg]lobal|[Ss]cript):)(?!__enable_)([A-Za-z0-9_-]+)') {
@@ -165,21 +170,25 @@ function Use-CachedInit {
         foreach ($__v in (Get-Variable -Scope Local)) {
             $__existingVars[$__v.Name] = $true
         }
+        $__existingAliases = @{}
+        foreach ($__a in (Get-Alias)) {
+            $__existingAliases[$__a.Name] = $true
+        }
 
         . $cacheFile
 
         foreach ($__v in (Get-Variable -Scope Local)) {
-            if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -ne '__existingVars') {
+            if (-not $__existingVars.ContainsKey($__v.Name) -and $__v.Name -notmatch '^__') {
                 Set-Variable -Name $__v.Name -Value $__v.Value -Scope Global -Force -ErrorAction SilentlyContinue
             }
         }
         foreach ($__fn in (Get-ChildItem -Path Function:\)) {
-            if ($__fn.Name -notin @('Use-CachedInit', 'prompt') -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File -eq $cacheFile) {
+            if ($__fn.Name -notin @('Use-CachedInit', 'prompt') -and $__fn.Name -notmatch '^__enable_' -and $__fn.ScriptBlock -and $__fn.ScriptBlock.File -eq $cacheFile) {
                 Set-Item -Path "Function:\global:$($__fn.Name)" -Value $__fn.ScriptBlock -Force
             }
         }
         foreach ($__al in (Get-Alias)) {
-            if ($__al.Options -notmatch 'ReadOnly|Constant') {
+            if (-not $__existingAliases.ContainsKey($__al.Name) -and $__al.Options -notmatch 'ReadOnly|Constant') {
                 Set-Alias -Name $__al.Name -Value $__al.Definition -Scope Global -Force -ErrorAction SilentlyContinue
             }
         }
@@ -213,8 +222,12 @@ function Update-InitCache {
             else {
                 $ompScript = $ompLines -join "`n"
 
+                $oldOmpScript = $ompScript
                 # 1. Give each terminal session a unique POSH_SESSION_ID instead of a static cached GUID
                 $ompScript = $ompScript -replace '(?m)^\$env:POSH_SESSION_ID\s*=\s*"[^"]+"', '$env:POSH_SESSION_ID = [guid]::NewGuid().ToString()'
+                if ($ompScript -eq $oldOmpScript) {
+                    Write-Verbose 'POSH_SESSION_ID assignment pattern was not found in oh-my-posh output.'
+                }
 
                 # 2. Pre-compute the secondary continuation prompt so startup doesn't spawn oh-my-posh.exe synchronously (~380ms saved)
                 $secondaryLines = & oh-my-posh print secondary --config $theme --shell=pwsh

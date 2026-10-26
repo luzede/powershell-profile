@@ -7,13 +7,29 @@ function Set-PSReadLineOptionsCompat {
     param([Parameter(Mandatory)][hashtable]$Options)
 
     $safeOptions = $Options.Clone()
-    if ($PSVersionTable.PSEdition -ne 'Core') {
+    $psrl = Get-Module -Name PSReadLine
+    if (-not $psrl) {
+        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+    }
+    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
+
+    if ($psrlVersion -lt [version]'2.1.0') {
         $safeOptions.Remove('PredictionSource')
+    }
+    if ($psrlVersion -lt [version]'2.2.0') {
         $safeOptions.Remove('PredictionViewStyle')
+    }
+    if ($psrlVersion -lt [version]'2.0.0') {
+        $safeOptions.Remove('Colors')
     }
 
     if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set PSReadLine options')) {
-        Set-PSReadLineOption @safeOptions
+        try {
+            Set-PSReadLineOption @safeOptions
+        }
+        catch {
+            Write-Verbose "Unable to set all PSReadLine options: $_"
+        }
     }
 }
 
@@ -21,12 +37,28 @@ function Set-PredictionSource {
     [CmdletBinding(SupportsShouldProcess)]
     param()
 
+    $psrl = Get-Module -Name PSReadLine
+    if (-not $psrl) {
+        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+    }
+    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
+
     if ($PSCmdlet.ShouldProcess('PSReadLine', 'Set prediction source')) {
-        if ($PSVersionTable.PSEdition -eq 'Core') {
-            Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+        if ($psrlVersion -ge [version]'2.1.0' -and $PSVersionTable.PSEdition -eq 'Core') {
+            try {
+                Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+            }
+            catch {
+                Write-Verbose "Unable to set PredictionSource to HistoryAndPlugin: $_"
+            }
         }
 
-        Set-PSReadLineOption -MaximumHistoryCount 10000
+        try {
+            Set-PSReadLineOption -MaximumHistoryCount 10000
+        }
+        catch {
+            Write-Verbose "Unable to set MaximumHistoryCount: $_"
+        }
     }
 }
 
@@ -34,6 +66,12 @@ function Initialize-PSReadLine {
     if (-not (IsInteractiveShell)) {
         return
     }
+
+    $psrl = Get-Module -Name PSReadLine
+    if (-not $psrl) {
+        $psrl = Get-Module -Name PSReadLine -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+    }
+    $psrlVersion = if ($psrl) { $psrl.Version } else { [version]'0.0.0' }
 
     $options = @{
         EditMode                      = 'Windows'
@@ -57,20 +95,40 @@ function Initialize-PSReadLine {
     }
 
     Set-PSReadLineOptionsCompat -Options $options
-    Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
-    Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
-    Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+d' -Function DeleteChar
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+w' -Function BackwardDeleteWord
-    Set-PSReadLineKeyHandler -Chord 'Alt+d' -Function DeleteWord
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+LeftArrow' -Function BackwardWord
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+RightArrow' -Function ForwardWord
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+z' -Function Undo
-    Set-PSReadLineKeyHandler -Chord 'Ctrl+y' -Function Redo
 
-    Set-PSReadLineOption -AddToHistoryHandler {
-        param([string]$line)
-        $line -notmatch '(?i)(password|secret|token|apikey|connectionstring)'
+    $keyBindings = @(
+        @{ Key = 'UpArrow'; Function = 'HistorySearchBackward' },
+        @{ Key = 'DownArrow'; Function = 'HistorySearchForward' },
+        @{ Key = 'Tab'; Function = 'MenuComplete' },
+        @{ Chord = 'Ctrl+d'; Function = 'DeleteChar' },
+        @{ Chord = 'Ctrl+w'; Function = 'BackwardDeleteWord' },
+        @{ Chord = 'Alt+d'; Function = 'DeleteWord' },
+        @{ Chord = 'Ctrl+LeftArrow'; Function = 'BackwardWord' },
+        @{ Chord = 'Ctrl+RightArrow'; Function = 'ForwardWord' },
+        @{ Chord = 'Ctrl+z'; Function = 'Undo' },
+        @{ Chord = 'Ctrl+y'; Function = 'Redo' }
+    )
+
+    foreach ($kb in $keyBindings) {
+        try {
+            Set-PSReadLineKeyHandler @kb -ErrorAction SilentlyContinue
+        }
+        catch {
+            Write-Verbose "Failed to bind PSReadLine key: $_"
+        }
+    }
+
+    if ($psrlVersion -ge [version]'2.0.0') {
+        try {
+            Set-PSReadLineOption -AddToHistoryHandler {
+                param([string]$line)
+                $normalized = $line -replace '[-_ ]', ''
+                $normalized -notmatch '(?i)(password|passwd|pwd|secret|token|apikey|connectionstring|credential)'
+            }
+        }
+        catch {
+            Write-Verbose "Unable to set AddToHistoryHandler: $_"
+        }
     }
 
     Set-PredictionSource
@@ -87,31 +145,43 @@ function Register-CustomCompletion {
         deno = @('run', 'compile', 'bundle', 'test', 'lint', 'fmt', 'cache', 'info', 'doc', 'upgrade')
     }
 
-    Register-ArgumentCompleter -Native -CommandName git, npm, deno -ScriptBlock {
-        param($wordToComplete, $commandAst, $cursorPosition)
-        $null = $cursorPosition
-        $completionWord = $wordToComplete
-        $map = $completionMap
-        $command = [System.IO.Path]::GetFileNameWithoutExtension($commandAst.CommandElements[0].Value)
-        if ($map.ContainsKey($command)) {
-            $map[$command] |
-            Where-Object { $_ -like "$completionWord*" } |
-            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
-        }
-    }.GetNewClosure()
+    $nativeParams = if ($PSVersionTable.PSEdition -eq 'Core') { @{ Native = $true } } else { @{} }
 
-    Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock {
-        param($wordToComplete, $commandAst, $cursorPosition)
-        $null = $wordToComplete
-        if (Get-Command -Name dotnet -ErrorAction SilentlyContinue) {
-            dotnet complete --position $cursorPosition $commandAst.ToString() |
-            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    try {
+        Register-ArgumentCompleter @nativeParams -CommandName git, npm, deno -ScriptBlock {
+            param($wordToComplete, $commandAst, $cursorPosition)
+            $null = $cursorPosition
+            $completionWord = $wordToComplete
+            $map = $completionMap
+            $command = [System.IO.Path]::GetFileNameWithoutExtension($commandAst.CommandElements[0].Value)
+            if ($map.ContainsKey($command)) {
+                $pattern = [System.Management.Automation.WildcardPattern]::Escape($completionWord) + '*'
+                $map[$command] |
+                    Where-Object { $_ -like $pattern } |
+                    ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+            }
+        }.GetNewClosure()
+
+        Register-ArgumentCompleter @nativeParams -CommandName dotnet -ScriptBlock {
+            param($wordToComplete, $commandAst, $cursorPosition)
+            $null = $wordToComplete
+            if (Get-Command -Name dotnet -ErrorAction SilentlyContinue) {
+                dotnet complete --position $cursorPosition $commandAst.ToString() |
+                    ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+            }
         }
+    }
+    catch {
+        Write-Verbose "Unable to register argument completers: $_"
     }
 }
 
 function Initialize-OptionalModule {
     if (-not (IsInteractiveShell)) {
+        return
+    }
+
+    if (Get-EventSubscriber -SourceIdentifier PowerShell.OnIdle -ErrorAction SilentlyContinue) {
         return
     }
 
@@ -121,7 +191,7 @@ function Initialize-OptionalModule {
             Import-Module -Name Terminal-Icons -Global -ErrorAction Stop
         }
         catch {
-            Write-Verbose "Terminal-Icons module is not installed: $_"
+            Write-Warning "Failed to load Terminal-Icons module: $_"
         }
     } | Out-Null
 }

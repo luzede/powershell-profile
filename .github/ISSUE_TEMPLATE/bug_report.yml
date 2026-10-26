@@ -1,5 +1,6 @@
 name: Bug report
 description: Report a reproducible bug
+title: "[Bug]: "
 labels: [bug]
 body:
   - type: markdown
@@ -42,13 +43,18 @@ body:
     attributes:
       label: OS
       placeholder: Windows 11 24H2
+    validations:
+      required: true
   - type: input
     id: psver
     attributes:
       label: PowerShell version
       placeholder: 7.5.1
+    validations:
+      required: true
   - type: textarea
     id: logs
     attributes:
       label: Logs or screenshots
-      description: Paste relevant errors or add screenshots
+      description: Paste relevant errors or add screenshots. Remove access tokens, secrets, credentials, and private paths before posting.
+      render: shell

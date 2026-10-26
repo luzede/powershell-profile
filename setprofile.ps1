@@ -32,16 +32,45 @@ foreach ($file in $moduleFiles) {
     }
 }
 
-$bundleBuilder.ToString().TrimEnd() + "`n" | Set-Content -LiteralPath $bundledPath -Encoding UTF8 -NoNewline
+$bundledContent = $bundleBuilder.ToString().TrimEnd() + "`n"
+$parseErrors = $null
+$tokens = $null
+$null = [System.Management.Automation.Language.Parser]::ParseInput($bundledContent, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors -and $parseErrors.Count -gt 0) {
+    throw "Bundled profile contains syntax errors: $($parseErrors[0].Message) at line $($parseErrors[0].Extent.StartLineNumber)"
+}
+
+$bundledContent | Set-Content -LiteralPath $bundledPath -Encoding UTF8 -NoNewline
 Write-Host "Bundled $($moduleFiles.Count) modules into [$bundledPath]." -ForegroundColor Cyan
 
 # 2. Ensure git pre-commit hook is configured
 if ((Test-Path -LiteralPath (Join-Path $PSScriptRoot '.git')) -and (Test-Path -LiteralPath $hooksDir -PathType Container)) {
     if (Get-Command -Name 'git' -ErrorAction SilentlyContinue) {
-        $currentHooksPath = git -C $PSScriptRoot config --get core.hooksPath 2>$null
-        if ($currentHooksPath -ne '.githooks') {
-            git -C $PSScriptRoot config core.hooksPath .githooks
-            Write-Host 'Configured git core.hooksPath -> .githooks' -ForegroundColor DarkCyan
+        $nativeErrPref = if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) { $PSNativeCommandUseErrorActionPreference } else { $null }
+        $PSNativeCommandUseErrorActionPreference = $false
+        try {
+            $currentHooksPath = (git -C $PSScriptRoot config --get core.hooksPath 2>$null | Select-Object -First 1)
+            if ($LASTEXITCODE -eq 0 -and $currentHooksPath) {
+                $currentHooksPath = $currentHooksPath.Trim()
+            }
+            else {
+                $currentHooksPath = $null
+            }
+
+            if ($currentHooksPath -ne '.githooks') {
+                git -C $PSScriptRoot config core.hooksPath .githooks
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "Failed to set git core.hooksPath (exit code $LASTEXITCODE)."
+                }
+                else {
+                    Write-Host 'Configured git core.hooksPath -> .githooks' -ForegroundColor DarkCyan
+                }
+            }
+        }
+        finally {
+            if ($null -ne $nativeErrPref) {
+                $PSNativeCommandUseErrorActionPreference = $nativeErrPref
+            }
         }
     }
 }
@@ -57,9 +86,20 @@ if (-not (Test-Path -LiteralPath $profileDir -PathType Container)) {
     New-Item -Path $profileDir -ItemType Directory -Force | Out-Null
 }
 
+if (Test-Path -LiteralPath $profilePath -PathType Leaf) {
+    $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $backupPath = Join-Path $profileDir "oldprofile-$timestamp.ps1"
+    Copy-Item -LiteralPath $profilePath -Destination $backupPath -Force
+}
+
 Copy-Item -LiteralPath $bundledPath -Destination $profilePath -Force
 Write-Host "Installed bundled profile to [$profilePath]." -ForegroundColor Green
 
-. $profilePath
-Initialize-XdgEnvironment -Force
-Clear-InitCache
+try {
+    . $profilePath
+    Initialize-XdgEnvironment -Force
+    Clear-InitCache
+}
+catch {
+    Write-Warning "Profile installation succeeded, but cache refresh reported: $_"
+}

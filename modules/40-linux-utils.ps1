@@ -45,11 +45,21 @@ function pubip {
 }
 
 function winutil {
-    & ([ScriptBlock]::Create((Invoke-RestMethod -Uri 'https://christitus.com/win'))) @args
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    if ($PSCmdlet.ShouldProcess('https://christitus.com/win', 'Download and run Chris Titus WinUtil script')) {
+        $scriptText = Get-UriContent -Uri 'https://christitus.com/win'
+        & ([ScriptBlock]::Create($scriptText)) @args
+    }
 }
 
 function winutildev {
-    & ([ScriptBlock]::Create((Invoke-RestMethod -Uri 'https://christitus.com/windev'))) @args
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    if ($PSCmdlet.ShouldProcess('https://christitus.com/windev', 'Download and run Chris Titus WinUtil Dev script')) {
+        $scriptText = Get-UriContent -Uri 'https://christitus.com/windev'
+        & ([ScriptBlock]::Create($scriptText)) @args
+    }
 }
 
 function windev {
@@ -89,7 +99,13 @@ function admin {
     $cwd = (Get-Location).ProviderPath
     $quotedCwd = '"' + $cwd + '"'
     $shell = if (Test-Command pwsh) { 'pwsh.exe' } else { 'powershell.exe' }
-    $shellArgs = if ($args.Count -gt 0) { @('-NoExit', '-Command', ('"' + (($args -join ' ') -replace '"', '\"') + '"')) } else { @('-NoExit') }
+    $shellArgs = if ($args.Count -gt 0) {
+        $command = $args -join ' '
+        @('-NoExit', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)))
+    }
+    else {
+        @('-NoExit')
+    }
 
     if (Test-Command wt) {
         Start-Process wt -Verb RunAs -ArgumentList (@('-d', $quotedCwd, $shell) + $shellArgs)
@@ -136,7 +152,8 @@ function grep {
         [Parameter(Position = 1, ValueFromRemainingArguments)][string[]]$Path,
         [Parameter(ValueFromPipeline)][object]$InputObject,
         [Alias('i')][switch]$IgnoreCase,
-        [Alias('c')][switch]$CaseSensitive,
+        [switch]$CaseSensitive,
+        [Alias('c')][switch]$Count,
         [Alias('v')][switch]$InvertMatch,
         [Alias('r')][switch]$Recurse
     )
@@ -148,12 +165,19 @@ function grep {
             NotMatch      = [bool]$InvertMatch
         }
         $hasPipeline = $MyInvocation.ExpectingInput
+        $totalMatches = 0
     }
 
     process {
         if ($PSBoundParameters.ContainsKey('InputObject') -and $null -ne $InputObject) {
             $hasPipeline = $true
-            $InputObject | Select-String @selectParams
+            $matches = @($InputObject | Select-String @selectParams)
+            if ($Count) {
+                $totalMatches += $matches.Count
+            }
+            else {
+                $matches
+            }
         }
     }
 
@@ -161,20 +185,34 @@ function grep {
         if (-not $hasPipeline) {
             if ($Path -and $Path.Count -gt 0) {
                 foreach ($item in $Path) {
-                    if (Test-Path -LiteralPath $item -PathType Container) {
-                        Get-ChildItem -LiteralPath $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams
-                    }
-                    elseif ($Recurse) {
-                        Get-ChildItem -Path $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams
+                    $matches = @(
+                        if (Test-Path -LiteralPath $item -PathType Container) {
+                            $childParams = @{ LiteralPath = $item; File = $true; ErrorAction = 'SilentlyContinue' }
+                            if ($Recurse) { $childParams['Recurse'] = $true }
+                            Get-ChildItem @childParams | Select-String @selectParams
+                        }
+                        elseif ($Recurse) {
+                            Get-ChildItem -Path $item -Recurse -File -ErrorAction SilentlyContinue | Select-String @selectParams
+                        }
+                        else {
+                            Select-String -Path $item @selectParams
+                        }
+                    )
+                    if ($Count) {
+                        $totalMatches += $matches.Count
                     }
                     else {
-                        Select-String -Path $item @selectParams
+                        $matches
                     }
                 }
             }
             else {
                 Write-Error 'Usage: grep [-i] [-c] [-v] [-r] <pattern> [path...] or pipe input to grep'
+                return
             }
+        }
+        if ($Count) {
+            $totalMatches
         }
     }
 }
@@ -201,6 +239,11 @@ function sed {
 
     begin {
         $isExprMode = $First -match '^s(.)(.+?)\1(.*?)\1([gi]*)$'
+        if (-not $isExprMode -and $First -match '^s[^A-Za-z0-9]') {
+            Write-Error "Invalid sed expression syntax. Usage: sed 's/find/replace/g' [File]"
+            $invalidExpr = $true
+            return
+        }
         if ($isExprMode) {
             $findPattern = $Matches[2]
             $replaceWith = $Matches[3]
@@ -213,6 +256,7 @@ function sed {
     }
 
     process {
+        if ($invalidExpr) { return }
         if ($PSBoundParameters.ContainsKey('InputObject')) {
             $hasPipeline = $true
             if ($null -eq $InputObject) {
@@ -234,7 +278,7 @@ function sed {
     }
 
     end {
-        if ($hasPipeline) {
+        if ($invalidExpr -or $hasPipeline) {
             return
         }
 
@@ -243,11 +287,14 @@ function sed {
                 Write-Error "File not found: $targetFile"
                 return
             }
-            $raw = Get-Content -LiteralPath $targetFile -Raw
+            $resolvedTarget = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($targetFile)
+            $raw = [System.IO.File]::ReadAllText($resolvedTarget)
             if ($null -ne $raw) {
                 $regex = [regex]::new($findPattern, $regexOptions)
                 $updated = if ($replaceAll) { $regex.Replace($raw, $replaceWith) } else { $regex.Replace($raw, $replaceWith, 1) }
-                Set-Content -LiteralPath $targetFile -Value $updated -NoNewline
+                $tempFile = Join-Path $env:TEMP ("sed-$PID-$([guid]::NewGuid().ToString('N')).tmp")
+                [System.IO.File]::WriteAllText($tempFile, $updated, [System.Text.UTF8Encoding]::new($false))
+                Move-Item -LiteralPath $tempFile -Destination $resolvedTarget -Force
             }
         }
         else {
@@ -262,9 +309,13 @@ function sed {
                 Write-Error "File not found: $file"
                 return
             }
-            $raw = Get-Content -LiteralPath $file -Raw
+            $resolvedTarget = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($file)
+            $raw = [System.IO.File]::ReadAllText($resolvedTarget)
             if ($null -ne $raw) {
-                Set-Content -LiteralPath $file -Value $raw.Replace($find, $replace) -NoNewline
+                $updated = $raw.Replace($find, $replace)
+                $tempFile = Join-Path $env:TEMP ("sed-$PID-$([guid]::NewGuid().ToString('N')).tmp")
+                [System.IO.File]::WriteAllText($tempFile, $updated, [System.Text.UTF8Encoding]::new($false))
+                Move-Item -LiteralPath $tempFile -Destination $resolvedTarget -Force
             }
         }
     }
@@ -328,11 +379,15 @@ function export {
     if ($Arguments.Count -eq 2 -and $Arguments[0] -notmatch '=' -and $Arguments[1] -notmatch '=') {
         $key = $Arguments[0]
         $val = $Arguments[1]
+        if ($key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+            Write-Error "Invalid environment variable name: '$key'"
+            return
+        }
         if ($Persist) {
             Set-PersistentEnv -Name $key -Value $val
         }
         else {
-            Set-Item -Path "env:$key" -Value $val -Force
+            [Environment]::SetEnvironmentVariable($key, $val, 'Process')
         }
         return
     }
@@ -358,20 +413,28 @@ function export {
             if ($val.Length -ge 2 -and (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'")))) {
                 $val = $val.Substring(1, $val.Length - 2)
             }
+            if ($key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                Write-Error "Invalid environment variable name: '$key'"
+                continue
+            }
             if ($Persist) {
                 Set-PersistentEnv -Name $key -Value $val
             }
             else {
-                Set-Item -Path "env:$key" -Value $val -Force
+                [Environment]::SetEnvironmentVariable($key, $val, 'Process')
             }
         }
         else {
+            if ($arg -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                Write-Error "Invalid environment variable name: '$arg'"
+                continue
+            }
             $existing = [Environment]::GetEnvironmentVariable($arg, 'Process')
             if ($null -ne $existing -and $Persist) {
                 Set-PersistentEnv -Name $arg -Value $existing
             }
             elseif ($null -eq $existing) {
-                Set-Item -Path "env:$arg" -Value '' -Force
+                [Environment]::SetEnvironmentVariable($arg, '', 'Process')
             }
         }
     }
@@ -390,7 +453,11 @@ function unset {
     )
 
     foreach ($varName in $Name) {
-        Remove-Item -Path "env:$varName" -ErrorAction SilentlyContinue
+        if ($varName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+            Write-Warning "Skipping invalid environment variable name: '$varName'"
+            continue
+        }
+        [Environment]::SetEnvironmentVariable($varName, $null, 'Process')
         if ($Persist) {
             [Environment]::SetEnvironmentVariable($varName, $null, 'User')
         }
@@ -417,7 +484,7 @@ function printenv {
         Get-ChildItem Env: | Sort-Object Name | ForEach-Object {
             $entry = "$($_.Name)=$($_.Value)"
             if ($NullTerminated) {
-                Write-Host -NoNewline "$entry$terminator"
+                [Console]::Out.Write("$entry$terminator")
             }
             else {
                 $entry
@@ -431,7 +498,7 @@ function printenv {
         $item = Get-Item -LiteralPath "Env:$varName" -ErrorAction SilentlyContinue
         if ($null -ne $item) {
             if ($NullTerminated) {
-                Write-Host -NoNewline "$($item.Value)$terminator"
+                [Console]::Out.Write("$($item.Value)$terminator")
             }
             else {
                 $item.Value
@@ -446,15 +513,29 @@ function printenv {
 }
 
 function pkill {
+    [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory, Position = 0)][string]$Name)
     $cleanName = $Name -replace '\.exe$', ''
-    Get-Process -Name $cleanName -ErrorAction SilentlyContinue | Stop-Process -Force
+    if ($cleanName -notmatch '^[A-Za-z0-9_.-]+$') {
+        Write-Error "Invalid process name: '$Name'"
+        return
+    }
+    $procs = @(Get-Process | Where-Object { $_.ProcessName -eq $cleanName })
+    foreach ($proc in $procs) {
+        if ($PSCmdlet.ShouldProcess("$($proc.ProcessName) (PID: $($proc.Id))", 'Stop process')) {
+            $proc | Stop-Process -Force
+        }
+    }
 }
 
 function pgrep {
     param([Parameter(Mandatory, Position = 0)][string]$Name)
     $cleanName = $Name -replace '\.exe$', ''
-    Get-Process -Name $cleanName -ErrorAction SilentlyContinue
+    if ($cleanName -notmatch '^[A-Za-z0-9_.-]+$') {
+        Write-Error "Invalid process name: '$Name'"
+        return
+    }
+    Get-Process | Where-Object { $_.ProcessName -eq $cleanName }
 }
 
 function head {
@@ -536,7 +617,7 @@ function trash {
     .SYNOPSIS
         Safely moves files or directories (including hidden files and wildcards) to the Windows Recycle Bin.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ValueFromRemainingArguments)]
         [Alias('FullName', 'LiteralPath')]
@@ -566,24 +647,26 @@ function trash {
 
             foreach ($item in $items) {
                 $fullPath = $item.FullName
-                try {
-                    if ($item.PSIsContainer) {
-                        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
-                            $fullPath,
-                            [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-                            [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-                        )
+                if ($PSCmdlet.ShouldProcess($fullPath, 'Move to Recycle Bin')) {
+                    try {
+                        if ($item.PSIsContainer) {
+                            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
+                                $fullPath,
+                                [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                                [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+                            )
+                        }
+                        else {
+                            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
+                                $fullPath,
+                                [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                                [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+                            )
+                        }
                     }
-                    else {
-                        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
-                            $fullPath,
-                            [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-                            [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-                        )
+                    catch {
+                        Write-Error "Could not move '$fullPath' to Recycle Bin: $_"
                     }
-                }
-                catch {
-                    Write-Error "Could not move '$fullPath' to Recycle Bin: $_"
                 }
             }
         }
@@ -599,8 +682,8 @@ function dtop {
 }
 
 function k9 { param([Parameter(Mandatory)][string]$Name) pkill $Name }
-function la { Get-ChildItem @args | Format-Table -AutoSize }
-function ll { Get-ChildItem -Force @args | Format-Table -AutoSize }
+function la { Get-ChildItem @args }
+function ll { Get-ChildItem -Force @args }
 
 function sysinfo { Get-ComputerInfo }
 

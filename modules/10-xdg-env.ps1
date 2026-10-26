@@ -9,7 +9,7 @@ if (-not $env:XDG_DATA_HOME)   { $env:XDG_DATA_HOME   = "$HOME\.local\share" }
 if (-not $env:XDG_CACHE_HOME)  { $env:XDG_CACHE_HOME  = "$HOME\.cache" }
 if (-not $env:XDG_STATE_HOME)  { $env:XDG_STATE_HOME  = "$HOME\.local\state" }
 
-if ((Test-Path -LiteralPath $env:XDG_BIN_HOME -PathType Container) -and (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME)) {
+if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
     $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
 }
 
@@ -24,7 +24,8 @@ function Initialize-XdgEnvironment {
 
     $cacheDir = Get-ProfileCacheDir
     $customDir = Get-ProfileCustomDir
-    $sentinelFile = Join-Path $cacheDir '.xdg-initialized'
+    $profileDir = Get-ProfileDir
+    $sentinelFile = Join-Path $profileDir '.xdg-initialized'
     if (-not $Force -and (Test-Path -LiteralPath $sentinelFile -PathType Leaf)) {
         return
     }
@@ -46,15 +47,34 @@ function Initialize-XdgEnvironment {
     )
 
     foreach ($dir in $directories) {
+        if ([string]::IsNullOrWhiteSpace($dir) -or -not [System.IO.Path]::IsPathRooted($dir)) {
+            Write-Warning "Skipping XDG directory with non-absolute path: '$dir'"
+            continue
+        }
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
             New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+        }
+    }
+
+    if (($env:PATH -split ';') -notcontains $env:XDG_BIN_HOME) {
+        $env:PATH = "$env:XDG_BIN_HOME;$env:PATH"
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($userPath) {
+        $userParts = $userPath -split ';'
+        if ($userParts -notcontains $env:XDG_BIN_HOME) {
+            [Environment]::SetEnvironmentVariable('Path', "$env:XDG_BIN_HOME;$userPath", 'User')
         }
     }
 
     Get-Date -Format 'o' | Set-Content -LiteralPath $sentinelFile -Encoding UTF8 -ErrorAction Stop
 }
 
-# Only run one-time XDG provisioning if the sentinel file doesn't exist yet
-if (-not (Test-Path -LiteralPath (Join-Path (Get-ProfileCacheDir) '.xdg-initialized') -PathType Leaf)) {
-    Initialize-XdgEnvironment
+# Run XDG provisioning safely (it checks its own sentinel unless -Force is given)
+try {
+    Initialize-XdgEnvironment -ErrorAction Stop
+}
+catch {
+    Write-Warning "XDG environment provisioning failed: $_"
 }

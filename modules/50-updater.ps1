@@ -2,8 +2,6 @@
 # Module 50: Profile Updater, Maintenance & Startup Orchestration
 # ======================================================================
 
-$repo_root = 'https://raw.githubusercontent.com/luzede'
-
 function Update-Profile {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -11,12 +9,20 @@ function Update-Profile {
         [switch]$PassThru
     )
 
-    $url = "$repo_root/powershell-profile/main/Microsoft.PowerShell_profile.ps1"
+    $url = 'https://raw.githubusercontent.com/luzede/powershell-profile/main/Microsoft.PowerShell_profile.ps1'
     $target = $PROFILE.CurrentUserCurrentHost
     $tempFile = Join-Path $env:TEMP "Microsoft.PowerShell_profile-$PID-$([guid]::NewGuid().ToString('N')).ps1"
+    $updated = $false
 
     try {
         Save-UriToFile -Uri $url -OutFile $tempFile
+
+        $parseErrors = $null
+        $tokens = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($tempFile, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors -and $parseErrors.Count -gt 0) {
+            throw "Downloaded profile has syntax errors: $($parseErrors[0].Message)"
+        }
 
         $targetExists = Test-Path -LiteralPath $target -PathType Leaf
         $oldHash = if ($targetExists) { (Get-FileHash -LiteralPath $target -ErrorAction Stop).Hash } else { $null }
@@ -36,12 +42,19 @@ function Update-Profile {
                 New-Item -Path $targetDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
             }
 
-            Copy-Item -LiteralPath $tempFile -Destination $target -Force -ErrorAction Stop
+            if ($targetExists) {
+                $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+                $backupPath = Join-Path $targetDir "oldprofile-$timestamp.ps1"
+                Copy-Item -LiteralPath $target -Destination $backupPath -Force
+            }
+
+            Move-Item -LiteralPath $tempFile -Destination $target -Force -ErrorAction Stop
+            $updated = $true
             Clear-InitCache
             Write-Host 'Profile has been updated. Restart your shell to use the new version.' -ForegroundColor Magenta
         }
 
-        if ($PassThru) { return $true }
+        if ($PassThru) { return $updated }
     }
     catch {
         Write-Warning "Unable to check for profile updates: $_"
@@ -74,7 +87,7 @@ function Update-PowerShell {
         if ($PSCmdlet.ShouldProcess("PowerShell $currentVersion", "Upgrade to $latestVersion")) {
             winget upgrade --id Microsoft.PowerShell --exact --accept-source-agreements --accept-package-agreements
             if ($LASTEXITCODE -ne 0) {
-                Write-Error "winget failed to update PowerShell. Exit code: $LASTEXITCODE"
+                Write-Warning "winget failed to update PowerShell. Exit code: $LASTEXITCODE"
                 return
             }
             Write-Host 'PowerShell has been updated. Restart your shell to use the new version.' -ForegroundColor Magenta
@@ -89,16 +102,19 @@ function Clear-Cache {
     [CmdletBinding(SupportsShouldProcess)]
     param()
 
-    $paths = @(
-        "$env:SystemRoot\Prefetch\*",
-        "$env:SystemRoot\Temp\*",
-        "$env:TEMP\*",
-        "$env:LOCALAPPDATA\Microsoft\Windows\INetCache\*"
+    $patterns = @(
+        if ($env:SystemRoot) { Join-Path $env:SystemRoot 'Prefetch\*' }
+        if ($env:SystemRoot) { Join-Path $env:SystemRoot 'Temp\*' }
+        if ($env:TEMP)       { Join-Path $env:TEMP '*' }
+        if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\INetCache\*' }
     )
 
-    foreach ($path in $paths) {
-        if ($PSCmdlet.ShouldProcess($path, 'Remove cached files')) {
-            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($pattern in $patterns) {
+        $items = @(Get-Item -Path $pattern -Force -ErrorAction SilentlyContinue)
+        foreach ($item in $items) {
+            if ($PSCmdlet.ShouldProcess($item.FullName, 'Remove cached file')) {
+                Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
@@ -155,7 +171,12 @@ function Initialize-CustomProfile {
     $customDir = Get-ProfileCustomDir
     if (Test-Path -LiteralPath $customDir -PathType Container) {
         foreach ($customFile in (Get-ChildItem -LiteralPath $customDir -Filter '*.ps1' -File | Sort-Object Name)) {
-            . $customFile.FullName
+            try {
+                . $customFile.FullName
+            }
+            catch {
+                Write-Warning "Error loading custom profile script '$($customFile.Name)': $_"
+            }
         }
     }
 }

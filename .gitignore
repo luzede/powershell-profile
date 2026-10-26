@@ -1,15 +1,35 @@
 *.zip
 *.ttf
+!**/test/fixtures/**
+!**/assets/fonts/**
 
 # Secrets and environment variables
 .env
 .env.*
+!.env.example
+!.env.template
+!.env.sample
 *.key
 *.pem
 *.pfx
+*.p12
+*.crt
+id_rsa
+credentials.json
+.npmrc
+
+# Dependency and build output
+node_modules/
+dist/
+build/
+coverage/
 
 # OS and Editor artifacts
 .DS_Store
 Thumbs.db
-.vscode/
-.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+.idea/*
+!.idea/runConfigurations/

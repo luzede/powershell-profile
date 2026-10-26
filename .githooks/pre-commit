@@ -2,12 +2,32 @@
 set -e
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+SETPROFILE="${REPO_ROOT}/setprofile.ps1"
 
-if command -v pwsh >/dev/null 2>&1; then
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "$REPO_ROOT/setprofile.ps1" -BuildOnly
-else
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$REPO_ROOT/setprofile.ps1" -BuildOnly
+if [ ! -f "$SETPROFILE" ]; then
+    echo "pre-commit: $SETPROFILE not found; cannot rebuild the profile" >&2
+    exit 1
 fi
 
-git add "$REPO_ROOT/Microsoft.PowerShell_profile.ps1"
+if ! git -C "$REPO_ROOT" diff --quiet -- modules; then
+    echo "pre-commit: modules/ has unstaged changes; stage them so the bundled profile matches the commit" >&2
+    exit 1
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "$SETPROFILE" -BuildOnly
+elif command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SETPROFILE" -BuildOnly
+else
+    echo "pre-commit: neither pwsh nor powershell.exe found; cannot rebuild Microsoft.PowerShell_profile.ps1" >&2
+    exit 1
+fi
+
+BUNDLED="$REPO_ROOT/Microsoft.PowerShell_profile.ps1"
+if [ ! -f "$BUNDLED" ]; then
+    echo "pre-commit: expected build output $BUNDLED was not generated" >&2
+    exit 1
+fi
+
+git add -- "$BUNDLED"
 

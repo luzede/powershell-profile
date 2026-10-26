@@ -95,7 +95,7 @@ function Install-Profile {
     )
 
     $profileDir = Split-Path -Path $ProfilePath -Parent
-    if (-not (Test-Path -Path $profileDir)) {
+    if (-not (Test-Path -LiteralPath $profileDir)) {
         New-Item -Path $profileDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
     }
 
@@ -108,7 +108,7 @@ function Install-Profile {
         }
 
         $backupPath = Save-ProfileBackup -ProfilePath $ProfilePath
-        Copy-Item -Path $tempProfile -Destination $ProfilePath -Force -ErrorAction Stop
+        Copy-Item -LiteralPath $tempProfile -Destination $ProfilePath -Force -ErrorAction Stop
 
         Write-Host "PowerShell profile installed to [$ProfilePath]."
         if ($backupPath) {
@@ -117,7 +117,7 @@ function Install-Profile {
         return $downloadedHash
     }
     finally {
-        Remove-Item -Path $tempProfile -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tempProfile -ErrorAction SilentlyContinue
     }
 }
 
@@ -170,16 +170,22 @@ function Install-OhMyPoshTheme {
         New-Item -Path $themesDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
     }
     $themePath = Join-Path $themesDir "$ThemeName.omp.json"
+    $tempTheme = Join-Path $themesDir "$ThemeName-$PID-$([guid]::NewGuid().ToString('N')).omp.json.tmp"
     try {
-        Save-UriToFile -Uri $ThemeUri -OutFile $themePath
+        Save-UriToFile -Uri $ThemeUri -OutFile $tempTheme
+        $null = Get-Content -LiteralPath $tempTheme -Raw | ConvertFrom-Json -ErrorAction Stop
+        Move-Item -LiteralPath $tempTheme -Destination $themePath -Force -ErrorAction Stop
         $env:POSH_CONFIG = $themePath
         [Environment]::SetEnvironmentVariable('POSH_CONFIG', $themePath, 'User')
         Write-Host "Oh My Posh theme installed to [$themePath]."
         return $themePath
     }
     catch {
-        Write-Warning "Failed to download Oh My Posh theme. Error: $_"
+        Write-Warning "Failed to download or validate Oh My Posh theme. Error: $_"
         return $null
+    }
+    finally {
+        Remove-Item -LiteralPath $tempTheme -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -237,6 +243,12 @@ function Install-NerdFont {
             }
         }
 
+        $installedFamilies = Get-InstalledFontName
+        if ($installedFamilies -notcontains $FontDisplayName) {
+            Write-Warning "Font [$FontDisplayName] installation timed out or font was not registered."
+            return $false
+        }
+
         Write-Host "Font [$FontDisplayName] installed."
         return $true
     }
@@ -245,14 +257,14 @@ function Install-NerdFont {
         return $false
     }
     finally {
-        Remove-Item -Path $extractPath -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path $zipFilePath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $zipFilePath -Force -ErrorAction SilentlyContinue
     }
 }
 
 function Install-TerminalIconsModule {
     try {
-        Install-Module -Name Terminal-Icons -Repository PSGallery -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+        Install-Module -Name Terminal-Icons -Repository PSGallery -Scope CurrentUser -Force -ErrorAction Stop
         Write-Host 'Terminal-Icons module installed.'
         return $true
     }
@@ -264,11 +276,11 @@ function Install-TerminalIconsModule {
 
 if (-not (Test-IsAdministrator)) {
     Write-Warning 'Please run this script as an Administrator.'
-    return
+    exit 1
 }
 
 if (-not (Test-InternetConnection)) {
-    return
+    exit 1
 }
 
 try {
@@ -285,12 +297,15 @@ if ([string]::IsNullOrWhiteSpace($ExpectedProfileHash) -and $PSScriptRoot) {
         $ExpectedProfileHash = (Get-FileHash -LiteralPath $localBundledProfile -Algorithm SHA256 -ErrorAction Stop).Hash
     }
 }
+
+$failures = [System.Collections.Generic.List[string]]::new()
 $installedProfileHash = Install-Profile -SourceUri $profileSourceUri -ProfilePath $profilePath -ExpectedHash $ExpectedProfileHash
-Install-WinGetPackage -Id 'JanDeDobbeleer.OhMyPosh' -Name 'Oh My Posh' -CommandName 'oh-my-posh' | Out-Null
-Install-WinGetPackage -Id 'ajeetdsouza.zoxide' -Name 'zoxide' -CommandName 'zoxide' | Out-Null
-Install-OhMyPoshTheme | Out-Null
-Install-NerdFont | Out-Null
-Install-TerminalIconsModule | Out-Null
+if (-not $installedProfileHash) { $failures.Add('Profile installation') }
+if (-not (Install-WinGetPackage -Id 'JanDeDobbeleer.OhMyPosh' -Name 'Oh My Posh' -CommandName 'oh-my-posh')) { $failures.Add('Oh My Posh') }
+if (-not (Install-WinGetPackage -Id 'ajeetdsouza.zoxide' -Name 'zoxide' -CommandName 'zoxide')) { $failures.Add('zoxide') }
+if (-not (Install-OhMyPoshTheme)) { $failures.Add('Oh My Posh theme') }
+if (-not (Install-NerdFont)) { $failures.Add('Nerd Font') }
+if (-not (Install-TerminalIconsModule)) { $failures.Add('Terminal-Icons module') }
 
 if ($installedProfileHash -and (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
     try {
@@ -313,4 +328,9 @@ if ($installedProfileHash -and (Test-Path -LiteralPath $profilePath -PathType Le
     }
 }
 
-Write-Host 'Setup completed. Restart PowerShell to load the profile.'
+if ($failures.Count -gt 0) {
+    Write-Warning "Setup completed with $($failures.Count) issue(s): $($failures -join ', ')."
+    exit 1
+}
+
+Write-Host 'Setup completed successfully. Restart PowerShell to load the profile.'

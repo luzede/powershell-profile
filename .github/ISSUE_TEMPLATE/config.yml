@@ -1,5 +1,8 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
   - name: Security report
     url: https://github.com/luzede/powershell-profile/security/advisories/new
     about: Report security vulnerabilities privately.
+  - name: Questions & Discussions
+    url: https://github.com/luzede/powershell-profile/discussions
+    about: Ask questions and get help with configuration.
